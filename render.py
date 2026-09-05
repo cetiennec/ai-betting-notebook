@@ -5,7 +5,10 @@ from urllib.parse import urlencode
 
 import db
 
-TAGLINE = "a ledger of guesses about the world that artificial intelligence is making"
+TAGLINE = (
+    "Take your bet on what you think the future will look like,\n"
+    "    get reminded in a few years to observe what happened"
+)
 
 
 def e(value):

@@ -1,7 +1,9 @@
 # The Future with AI — Betting Notebook
 
-A ledger of guesses about the world that artificial intelligence is making.
-People write down a bet, say by when it should be judged, and vote on the ones
+Take your bet on what you think the future will look like; get reminded in a few
+years to observe what happened.
+
+People write a bet down, say by when it should be judged, and vote on the ones
 worth watching. Once a year the notebook writes back to tell you what has come
 due.
 
