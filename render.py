@@ -28,7 +28,8 @@ def layout(title, body, user=None, wide_footer=True):
         room = (
             '<a href="/propose">propose a bet</a>'
             '<a href="/desk">your desk</a>'
-            '<a href="/leave" class="who-out">sign out</a>'
+            '<a href="/desk#copies">your copies</a>'
+            '<a href="/leave">sign out</a>'
         )
     else:
         who = "not signed"
@@ -51,7 +52,6 @@ def layout(title, body, user=None, wide_footer=True):
   </header>
   <nav class="hall">
     <a href="/">the ledger</a>
-    <a href="/print">print a copy</a>
     %(room)s
     <span class="who">%(who)s</span>
   </nav>
@@ -139,9 +139,6 @@ def filter_bar(counts, query, category, status, sort):
             n,
         )
 
-    cats = [link("everything", {"category": ""}, not category)]
-    cats += [link(name, {"category": name}, category == name, n) for name, n in counts]
-
     sorts = [
         link("most interesting", {"sort": "interesting"}, sort == "interesting"),
         link("newest", {"sort": "newest"}, sort == "newest"),
@@ -152,17 +149,33 @@ def filter_bar(counts, query, category, status, sort):
     ]
 
     return """<div class="filters">
-  <div class="row"><span class="label">subject</span>%s</div>
   <div class="row"><span class="label">order</span>%s</div>
   <div class="row"><span class="label">standing</span>%s</div>
-</div>""" % ("".join(cats), "".join(sorts), "".join(states))
+</div>""" % ("".join(sorts), "".join(states))
 
 
-def search_form(query):
+def search_form(query, counts, category, status, sort):
+    """One form: the words you are looking for, and the subject to look in."""
+    seen = dict(counts)
+    names = sorted(set(db.CATEGORIES) | set(seen))
+    options = ['<option value="">every subject</option>']
+    for name in names:
+        n = seen.get(name, 0)
+        options.append(
+            '<option value="%s"%s>%s (%d)</option>'
+            % (e(name), " selected" if category == name else "", e(name), n)
+        )
+    hidden = "".join(
+        '<input type="hidden" name="%s" value="%s">' % (k, e(v))
+        for k, v in (("status", status), ("sort", sort))
+        if v
+    )
     return """<form class="search" method="get" action="/">
-  <input type="search" name="q" value="%s" placeholder="search the ledger &mdash; a word, a subject, a year">
+  <input type="search" name="q" value="%s" placeholder="search the ledger &mdash; a word, a name, a year">
+  <select name="category" onchange="this.form.submit()" aria-label="subject">%s</select>
+  %s
   <button type="submit">look</button>
-</form>""" % e(query)
+</form>""" % (e(query), "".join(options), hidden)
 
 
 # --- pages ----------------------------------------------------------------
@@ -188,17 +201,22 @@ def index(bets, counts, user, query, category, status, sort, note=""):
 %(ledger)s
 <div class="deeds">
   <a class="button" href="/propose">Propose a bet</a>
-  <a class="button" href="/print%(pq)s">Print this selection</a>
-  <a class="button" href="/export.txt%(pq)s">Take it as plain text</a>
+  %(take)s
 </div>""" % {
         "note": note,
-        "search": search_form(query),
+        "search": search_form(query, counts, category, status, sort),
         "filters": filter_bar(counts, query, category, status, sort),
         "head": head,
         "n": len(bets),
         "word": "bet" if len(bets) == 1 else "bets",
         "ledger": ledger,
-        "pq": qs(q=query, category=category, status=status, sort=sort),
+        "take": (
+            '<a class="button" href="/print%(pq)s">Print this selection</a>'
+            '<a class="button" href="/export.txt%(pq)s">Take it as plain text</a>'
+            % {"pq": qs(q=query, category=category, status=status, sort=sort)}
+        )
+        if user
+        else '<a class="button" href="/enter">Sign in to keep a copy</a>',
     }
     return layout("The ledger", body, user)
 
@@ -250,7 +268,7 @@ def bet_page(bet, user, note=""):
   </dl>
   <div class="deeds no-print">
     %(votebtn)s
-    <a class="button" href="/print?bet=%(id)d">Print this bet</a>
+    %(print)s
     <a class="button" href="/">Back to the ledger</a>
   </div>
   %(verdict)s
@@ -274,6 +292,9 @@ def bet_page(bet, user, note=""):
         )
         if user
         else '<a class="button" href="/enter">Sign in to vote</a>',
+        "print": '<a class="button" href="/print?bet=%d">Print this bet</a>' % bet["id"]
+        if user
+        else "",
         "verdict": verdict,
         "resolve": resolve,
     }
@@ -396,7 +417,20 @@ def desk_page(user, mine, backed, note="", error=""):
 <h2>Bets you found interesting (%(nback)d)</h2>
 %(backed)s
 
-<div class="deeds"><a class="button" href="/print?mine=1">Print your own bets</a></div>""" % {
+<h2 id="copies">Your copies</h2>
+<p class="lede">Nothing here is kept for you anywhere but on paper and on your own
+   machine. Take what you want to keep.</p>
+<div class="filters">
+  <div class="row"><span class="label">your own bets</span>
+    <a href="/print?mine=1">print sheet</a><a href="/export.txt?mine=1">plain text</a></div>
+  <div class="row"><span class="label">bets you backed</span>
+    <a href="/print?backed=1">print sheet</a><a href="/export.txt?backed=1">plain text</a></div>
+  <div class="row"><span class="label">the whole ledger</span>
+    <a href="/print">print sheet</a><a href="/export.txt">plain text</a></div>
+</div>
+<p class="hint">A print sheet opens ready for your printer &mdash; the notebook furniture
+   drops away and only the bets are on the page. Any search or subject you are looking
+   at on the ledger can be printed the same way, from the foot of the ledger itself.</p>""" % {
         "banner": banner,
         "pseudo": e(user["pseudo"]),
         "show": " checked" if user["show_pseudo"] else "",

@@ -3,19 +3,19 @@
    Everything here should survive being printed. */
 
 :root {
-  --paper:      #f4eedd;
-  --paper-edge: #e7dec7;
-  --ink:        #2b2620;
-  --ink-faded:  #6d6355;
+  --paper:      #fbf9f4;
+  --paper-edge: #e9e3d6;
+  --ink:        #2a2724;
+  --ink-faded:  #726a5e;
   --rubric:     #93301f;
-  --rule:       #c9bda1;
+  --rule:       #d8cfba;
   --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
   --mono: "Courier New", Courier, monospace;
 }
 
 * { box-sizing: border-box; }
 
-html { background: #ded4bb; }
+html { background: #eee9dd; }
 
 body {
   margin: 0;
@@ -91,18 +91,21 @@ p.lede { font-style: italic; color: var(--ink-faded); }
   border-left-width: 5px;
   padding: 0.7rem 1rem;
   margin: 1.2rem 0;
-  background: #f7e9dd;
+  background: #fdf4ec;
 }
-.notice.plain { border-color: var(--rule); background: #efe7d3; }
+.notice.plain { border-color: var(--rule); background: #f6f2e7; }
 
 /* --- search & filters -------------------------------------------------- */
 
 form.search {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.5rem;
   margin: 1.4rem 0 0.6rem;
 }
-form.search input[type=search] { flex: 1; }
+form.search input[type=search] { flex: 3 1 14rem; }
+form.search select { flex: 1 1 11rem; width: auto; font-size: 0.95rem; }
+form.search button { flex: 0 0 auto; }
 
 .filters {
   font-size: 0.85rem;
@@ -185,7 +188,7 @@ select, textarea {
   font-family: var(--serif);
   font-size: 1rem;
   color: var(--ink);
-  background: #fbf7ec;
+  background: #fffefb;
   border: 1px solid var(--ink-faded);
   padding: 0.4rem 0.55rem;
 }
@@ -198,7 +201,7 @@ button, .button {
   letter-spacing: 0.08em;
   font-size: 0.95rem;
   color: var(--ink);
-  background: #e8dfc8;
+  background: #f2ede0;
   border: 1px solid var(--ink);
   padding: 0.3rem 0.9rem;
   cursor: pointer;

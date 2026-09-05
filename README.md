@@ -33,16 +33,18 @@ python3 app.py send-letters --force --email you@example.org   # see one now
 | **Propose** | a claim, the reasoning behind it, a subject, and the year by which it should be judged |
 | **Vote** | one "interesting" mark per person per bet, toggleable; the ledger sorts by it |
 | **Subjects** | twelve categories — education, politics & governance, work & economy, information & trust, science & technology, health & medicine, art & culture, everyday life, war & security, climate & environment, law & rights, love & friendship |
-| **Search** | one box across claims, reasoning and subjects; combines with subject, standing and order |
+| **Search** | one box for words, a box beside it for the subject; both combine with standing and order |
 | **Sign in** | email only. A one-shot key, valid an hour. You are given a pen name you can change |
 | **Pen name** | shown or hidden, as a standing preference at your desk or per bet. Your address is never shown either way |
-| **Print** | every listing has a print sheet with its own stylesheet, and a plain-text copy to keep locally |
+| **Print** | *your copies*, at your desk: your own bets, the ones you backed, or the whole ledger — as a print sheet or plain text. Any search or subject you are looking at prints the same way from the foot of the ledger |
 | **Settle** | the author of a bet can record how it turned out, with a line on why |
 | **Yearly letter** | opt in at your desk: one letter a year with your bets, the ones you backed, and which have come due |
 
-Anything you can see, you can print or take away: `Print this selection` and
-`Take it as plain text` carry whatever the ledger is currently showing —
-search, subject and order included.
+Taking a copy is something you do in your own space rather than in the public
+hall: **your copies** lives at your desk, and the foot of the ledger will print
+whatever you are currently looking at — search, subject, standing and order
+included. Print sheets drop the notebook furniture and leave only the bets on
+the page.
 
 ## Layout
 

@@ -217,6 +217,10 @@ class Notebook(BaseHTTPRequestHandler):
             rows = db.list_bets(conn, viewer, sort="newest")
             rows = [b for b in rows if b["user_id"] == user["id"]]
             return rows, "Your own bets", "Written by %s." % user["pseudo"]
+        if args.get("backed") and user:
+            rows = db.list_bets(conn, viewer, sort="interesting")
+            rows = [b for b in rows if b["voted"] and b["user_id"] != user["id"]]
+            return rows, "Bets you found interesting", "Marked by %s." % user["pseudo"]
 
         query, category = args.get("q", ""), args.get("category", "")
         status, sort = args.get("status", ""), args.get("sort", "interesting")
