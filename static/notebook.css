@@ -1,0 +1,268 @@
+/* The Future with AI betting notebook
+   A deliberate single look: ink on cheap cream paper, ruled and numbered.
+   Everything here should survive being printed. */
+
+:root {
+  --paper:      #f4eedd;
+  --paper-edge: #e7dec7;
+  --ink:        #2b2620;
+  --ink-faded:  #6d6355;
+  --rubric:     #93301f;
+  --rule:       #c9bda1;
+  --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+  --mono: "Courier New", Courier, monospace;
+}
+
+* { box-sizing: border-box; }
+
+html { background: #ded4bb; }
+
+body {
+  margin: 0;
+  padding: 0 1rem 5rem;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--serif);
+  font-size: 17px;
+  line-height: 1.55;
+}
+
+.sheet {
+  max-width: 46rem;
+  margin: 0 auto;
+  background: var(--paper);
+  border-left: 1px solid var(--paper-edge);
+  border-right: 1px solid var(--paper-edge);
+  padding: 0 2.2rem;
+}
+
+a { color: var(--ink); text-decoration-color: var(--rule); text-underline-offset: 2px; }
+a:hover { color: var(--rubric); }
+
+/* --- masthead ---------------------------------------------------------- */
+
+.masthead { padding-top: 2.4rem; text-align: center; }
+.masthead h1 {
+  margin: 0;
+  font-size: 2.1rem;
+  font-weight: normal;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.masthead h1 a { text-decoration: none; }
+.masthead .sub {
+  margin: 0.45rem 0 0;
+  font-style: italic;
+  color: var(--ink-faded);
+}
+.masthead .rules { border-top: 3px double var(--ink); margin-top: 1rem; }
+
+nav.hall {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 1.4rem;
+  justify-content: center;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--rule);
+  font-variant: small-caps;
+  letter-spacing: 0.05em;
+  font-size: 0.95rem;
+}
+nav.hall .who { color: var(--ink-faded); font-style: italic; font-variant: normal; }
+
+/* --- generic type ------------------------------------------------------ */
+
+h2 {
+  font-size: 1.15rem;
+  font-weight: normal;
+  font-variant: small-caps;
+  letter-spacing: 0.08em;
+  margin: 2.2rem 0 0.6rem;
+  border-bottom: 1px solid var(--rule);
+  padding-bottom: 0.2rem;
+}
+h2:first-child { margin-top: 1.6rem; }
+
+p.lede { font-style: italic; color: var(--ink-faded); }
+.hint { font-size: 0.85rem; color: var(--ink-faded); font-style: italic; }
+.mono { font-family: var(--mono); font-style: normal; font-size: 0.92em; }
+.notice {
+  border: 1px solid var(--rubric);
+  border-left-width: 5px;
+  padding: 0.7rem 1rem;
+  margin: 1.2rem 0;
+  background: #f7e9dd;
+}
+.notice.plain { border-color: var(--rule); background: #efe7d3; }
+
+/* --- search & filters -------------------------------------------------- */
+
+form.search {
+  display: flex;
+  gap: 0.5rem;
+  margin: 1.4rem 0 0.6rem;
+}
+form.search input[type=search] { flex: 1; }
+
+.filters {
+  font-size: 0.85rem;
+  color: var(--ink-faded);
+  border-bottom: 1px solid var(--rule);
+  padding-bottom: 0.8rem;
+  margin-bottom: 0.4rem;
+}
+.filters .row { margin: 0.25rem 0; }
+.filters .label {
+  font-variant: small-caps;
+  letter-spacing: 0.06em;
+  color: var(--ink);
+  margin-right: 0.4rem;
+}
+.filters a { text-decoration: none; margin-right: 0.7rem; white-space: nowrap; }
+.filters a.on { color: var(--rubric); font-weight: bold; }
+.filters a .n { color: var(--ink-faded); font-family: var(--mono); font-size: 0.78rem; }
+
+/* --- the ledger -------------------------------------------------------- */
+
+ol.ledger { list-style: none; margin: 0; padding: 0; }
+
+.entry {
+  display: grid;
+  grid-template-columns: 3.2rem 1fr;
+  gap: 0 0.9rem;
+  padding: 1rem 0;
+  border-bottom: 1px solid var(--rule);
+  page-break-inside: avoid;
+}
+.entry .tally { text-align: right; padding-top: 0.15rem; }
+.entry .tally .count {
+  font-family: var(--mono);
+  font-size: 1.15rem;
+}
+.entry .tally .word {
+  display: block;
+  font-size: 0.65rem;
+  font-variant: small-caps;
+  letter-spacing: 0.08em;
+  color: var(--ink-faded);
+}
+.entry .claim { font-size: 1.06rem; margin: 0 0 0.25rem; }
+.entry .claim a { text-decoration: none; }
+.entry .meta {
+  font-size: 0.82rem;
+  color: var(--ink-faded);
+  font-style: italic;
+}
+.entry .meta .cat { font-variant: small-caps; font-style: normal; letter-spacing: 0.05em; }
+.entry .because { margin: 0.4rem 0 0; font-size: 0.93rem; }
+
+.stamp {
+  display: inline-block;
+  font-variant: small-caps;
+  letter-spacing: 0.08em;
+  font-size: 0.72rem;
+  border: 1px solid var(--rubric);
+  color: var(--rubric);
+  padding: 0 0.35rem;
+  transform: rotate(-1.5deg);
+}
+.stamp.quiet { border-color: var(--ink-faded); color: var(--ink-faded); }
+
+/* --- forms & buttons --------------------------------------------------- */
+
+label.field { display: block; margin: 1.1rem 0 0; }
+label.field .name {
+  display: block;
+  font-variant: small-caps;
+  letter-spacing: 0.07em;
+  margin-bottom: 0.25rem;
+}
+label.tick { display: block; margin: 0.8rem 0; }
+
+input[type=text], input[type=email], input[type=search], input[type=number],
+select, textarea {
+  width: 100%;
+  font-family: var(--serif);
+  font-size: 1rem;
+  color: var(--ink);
+  background: #fbf7ec;
+  border: 1px solid var(--ink-faded);
+  padding: 0.4rem 0.55rem;
+}
+textarea { min-height: 6.5rem; resize: vertical; }
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--rubric); outline-offset: 1px; }
+
+button, .button {
+  font-family: var(--serif);
+  font-variant: small-caps;
+  letter-spacing: 0.08em;
+  font-size: 0.95rem;
+  color: var(--ink);
+  background: #e8dfc8;
+  border: 1px solid var(--ink);
+  padding: 0.3rem 0.9rem;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-block;
+}
+button:hover, .button:hover { background: var(--ink); color: var(--paper); }
+button.vote {
+  border-style: dashed;
+  background: transparent;
+  font-size: 0.8rem;
+  padding: 0.1rem 0.5rem;
+}
+button.vote.cast { border-style: solid; background: var(--ink); color: var(--paper); }
+
+form.inline { display: inline; }
+.deeds { margin-top: 1.6rem; display: flex; gap: 0.6rem; flex-wrap: wrap; }
+
+/* --- single bet -------------------------------------------------------- */
+
+.bet-sheet .claim { font-size: 1.5rem; line-height: 1.35; margin: 1.4rem 0 0.5rem; }
+.bet-sheet .colophon {
+  font-style: italic;
+  color: var(--ink-faded);
+  border-bottom: 1px solid var(--rule);
+  padding-bottom: 0.9rem;
+}
+.bet-sheet .because { white-space: pre-wrap; margin: 1.2rem 0; }
+dl.record { margin: 1.2rem 0; }
+dl.record dt {
+  font-variant: small-caps;
+  letter-spacing: 0.06em;
+  color: var(--ink-faded);
+  float: left;
+  clear: left;
+  width: 9rem;
+}
+dl.record dd { margin: 0 0 0.35rem 9rem; }
+
+/* --- footer ------------------------------------------------------------ */
+
+footer.colophon {
+  margin-top: 3rem;
+  padding-top: 0.8rem;
+  border-top: 3px double var(--ink);
+  font-size: 0.8rem;
+  color: var(--ink-faded);
+  font-style: italic;
+  text-align: center;
+}
+
+/* --- printing ----------------------------------------------------------- */
+
+.printed-note { display: none; }
+
+@media print {
+  @page { margin: 18mm 16mm; }
+  html, body { background: #fff; color: #000; font-size: 11.5pt; }
+  .sheet { border: 0; padding: 0; max-width: none; }
+  nav.hall, form.search, .deeds, button, .no-print { display: none !important; }
+  .printed-note { display: block; }
+  .filters a:not(.on) { display: none; }
+  a { text-decoration: none; color: #000; }
+  .entry { border-bottom: 1px solid #999; }
+  .entry .because { font-size: 10.5pt; }
+  footer.colophon { border-top: 1px solid #000; }
+}
