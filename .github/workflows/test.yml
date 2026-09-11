@@ -1,0 +1,57 @@
+name: Tests
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_call:  # so the deploy workflow can wait on this
+
+jobs:
+  test:
+    name: Test on Python ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.12 is what the Dockerfile ships; the others guard the stdlib-only
+        # promise against changes in either direction.
+        python: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: There is nothing to install
+        run: |
+          test ! -f requirements.txt || (echo "a dependency appeared" && exit 1)
+          test ! -f pyproject.toml || (echo "a dependency appeared" && exit 1)
+
+      - name: Compile every page
+        run: python -m compileall -q app.py db.py render.py mail.py test_notebook.py
+
+      - name: Run the tests
+        run: python test_notebook.py
+
+  build:
+    name: Build the image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: docker build -t notebook:ci .
+      - name: It serves the ledger
+        run: |
+          docker run -d --name notebook -p 8420:8420 -e NOTEBOOK_HOST=0.0.0.0 notebook:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8420/ > /dev/null; then
+              echo "the notebook is open"
+              docker rm -f notebook
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "the notebook never opened"
+          docker logs notebook
+          exit 1
