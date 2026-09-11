@@ -1,0 +1,9 @@
+data/
+__pycache__/
+*.pyc
+.DS_Store
+.git/
+.github/
+test_notebook.py
+fly.toml
+README.md

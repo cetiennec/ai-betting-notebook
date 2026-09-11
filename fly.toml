@@ -1,0 +1,26 @@
+# fly.toml app configuration file generated for future-with-ai-notebook on 2026-09-09T17:02:52+02:00
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'future-with-ai-notebook'
+primary_region = 'cdg'
+
+[build]
+[env]
+  PORT = '8420'
+
+[[mounts]]
+  source = 'notebook_data'
+  destination = '/app/data'
+
+[http_service]
+  internal_port = 8420
+  force_https = true
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[vm]]
+  size = 'shared-cpu-1x'
+  memory = '256mb'
