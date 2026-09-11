@@ -306,8 +306,14 @@ def bet_page(bet, user, csrf, note=""):
             e(bet["verdict"] or "No note was left."),
         )
 
+    # The reasoning is the substance of a bet - the claim is only its
+    # headline - so it is set out under its own name rather than left to
+    # run in with the furniture.
     because = (
-        '<div class="because">%s</div>' % e(bet["reasoning"].strip())
+        """<div class="reasoning">
+    <span class="name">The reasoning</span>
+    <div class="because">%s</div>
+  </div>""" % e(bet["reasoning"].strip())
         if bet["reasoning"].strip()
         else '<p class="hint">No reasoning was written down.</p>'
     )
@@ -324,7 +330,6 @@ def bet_page(bet, user, csrf, note=""):
   </dl>
   <div class="deeds no-print">
     %(votebtn)s
-    %(print)s
     <a class="button" href="/">Back to the ledger</a>
   </div>
   %(verdict)s
@@ -346,9 +351,6 @@ def bet_page(bet, user, csrf, note=""):
             '<button type="submit" name="back" value="1">%s</button></form>'
             % (bet["id"], csrf_field(csrf), "Take back my vote" if bet["voted"] else "Mark it interesting")
         ),
-        "print": '<a class="button" href="/print?bet=%d">Print this bet</a>' % bet["id"]
-        if user
-        else "",
         "verdict": verdict,
         "resolve": resolve,
     }

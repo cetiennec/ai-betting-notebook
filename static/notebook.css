@@ -73,14 +73,17 @@ nav.hall .who { color: var(--ink-faded); font-style: italic; font-variant: norma
 
 /* --- generic type ------------------------------------------------------ */
 
+/* Two weights of rule, used consistently, so the eye can tell a new
+   section from the next item in one: double means "a section starts
+   here", single means "another of the same thing". */
 h2 {
   font-size: 1.15rem;
   font-weight: normal;
   font-variant: small-caps;
   letter-spacing: 0.08em;
-  margin: 2.2rem 0 0.6rem;
-  border-bottom: 1px solid var(--rule);
-  padding-bottom: 0.2rem;
+  margin: 2.6rem 0 0.7rem;
+  border-bottom: 3px double var(--rule);
+  padding-bottom: 0.25rem;
 }
 h2:first-child { margin-top: 1.6rem; }
 
@@ -109,11 +112,10 @@ form.search select { flex: 1 1 11rem; width: auto; font-size: 0.95rem; }
 form.search button { flex: 0 0 auto; }
 
 .filters {
-  font-size: 0.85rem;
+  font-size: 0.82rem;
   color: var(--ink-faded);
-  border-bottom: 1px solid var(--rule);
-  padding-bottom: 0.8rem;
-  margin-bottom: 0.4rem;
+  padding-bottom: 0.9rem;
+  margin-bottom: 0;
 }
 .filters .row { margin: 0.25rem 0; }
 .filters .label {
@@ -130,35 +132,60 @@ form.search button { flex: 0 0 auto; }
 
 ol.ledger { list-style: none; margin: 0; padding: 0; }
 
+/* More air between entries than inside one, so each reads as a block
+   rather than the page reading as a wall. */
 .entry {
   display: grid;
-  grid-template-columns: 3.2rem 1fr;
-  gap: 0 0.9rem;
-  padding: 1rem 0;
+  grid-template-columns: 3.9rem 1fr;
+  gap: 0 1rem;
+  padding: 1.45rem 0;
   border-bottom: 1px solid var(--rule);
   page-break-inside: avoid;
 }
-.entry .tally { text-align: right; padding-top: 0.15rem; }
+
+/* The count, what it counts, then the deed - stacked. The form wraps all
+   three, so it has to be the column, not just the cell around it. */
+.entry .tally, .entry .tally form.inline {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+}
+.entry .tally { padding-top: 0.1rem; }
 .entry .tally .count {
   font-family: var(--mono);
-  font-size: 1.15rem;
+  font-size: 1.4rem;
+  line-height: 1;
 }
 .entry .tally .word {
-  display: block;
-  font-size: 0.65rem;
+  order: 1;              /* the count, then what it counts, then the deed */
+  font-size: 0.6rem;
   font-variant: small-caps;
   letter-spacing: 0.08em;
   color: var(--ink-faded);
 }
-.entry .claim { font-size: 1.06rem; margin: 0 0 0.25rem; }
+.entry .tally button.vote { order: 2; }
+
+/* The claim leads and the reasoning follows it: same page, different
+   voice. Before, both were full-strength ink at nearly one size, and
+   nothing told the eye which to read first. */
+.entry .claim {
+  font-size: 1.14rem;
+  line-height: 1.42;
+  margin: 0 0 0.3rem;
+}
 .entry .claim a { text-decoration: none; }
 .entry .meta {
-  font-size: 0.82rem;
+  font-size: 0.8rem;
   color: var(--ink-faded);
   font-style: italic;
 }
 .entry .meta .cat { font-variant: small-caps; font-style: normal; letter-spacing: 0.05em; }
-.entry .because { margin: 0.4rem 0 0; font-size: 0.93rem; }
+.entry .because {
+  margin: 0.5rem 0 0;
+  font-size: 0.92rem;
+  color: var(--ink-faded);
+}
 
 .stamp {
   display: inline-block;
@@ -276,17 +303,40 @@ table.hands .n { text-align: right; width: 5rem; }
   border-bottom: 1px solid var(--rule);
   padding-bottom: 0.9rem;
 }
-.bet-sheet .because { white-space: pre-wrap; margin: 1.2rem 0; }
-dl.record { margin: 1.2rem 0; }
+/* The reasoning carries the bet; the claim is only its headline. Set it
+   off the way a printed book sets off a passage, and give it a name. */
+.bet-sheet .reasoning { margin: 1.5rem 0 1.8rem; }
+.bet-sheet .reasoning .name {
+  display: block;
+  font-variant: small-caps;
+  letter-spacing: 0.09em;
+  font-size: 0.82rem;
+  color: var(--ink-faded);
+  margin-bottom: 0.45rem;
+}
+.bet-sheet .because {
+  white-space: pre-wrap;
+  margin: 0;
+  font-size: 1.09rem;
+  line-height: 1.65;
+  border-left: 3px double var(--rule);
+  padding-left: 1.1rem;
+}
+/* A grid rather than floats: a long term used to wrap inside its 9rem
+   and drag the rest of the page out of line with it. */
+dl.record {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.3rem 1.4rem;
+  margin: 1.4rem 0;
+  font-size: 0.95rem;
+}
 dl.record dt {
   font-variant: small-caps;
   letter-spacing: 0.06em;
   color: var(--ink-faded);
-  float: left;
-  clear: left;
-  width: 9rem;
 }
-dl.record dd { margin: 0 0 0.35rem 9rem; }
+dl.record dd { margin: 0; }
 
 /* --- footer ------------------------------------------------------------ */
 
