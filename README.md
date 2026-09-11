@@ -120,7 +120,13 @@ each per fifteen minutes — see `db.rate_limited`), length caps on everything
 that is written down, `Secure` cookies and a content security policy when it
 is served over https, and a body it refuses to read past 64KB.
 
+An anonymous vote is still a cookie, and clearing it votes again - the
+deliberate trade for letting people weigh in without an account. It is no
+longer free, though: one address may be handed only a few new anonymous hands
+a day (`app.ANON_HANDS_PER_IP`), so a broom is tedious rather than a ballot
+box. Someone who already holds a hand may change their mind as often as they
+like.
+
 Still wanting, before it is more than a prototype: a real WSGI server rather
-than `ThreadingHTTPServer`, a moderation path for bets, and something better
-than a cookie behind an anonymous vote (today, clearing cookies votes again —
-a deliberate trade for letting people weigh in without an account).
+than `ThreadingHTTPServer`, and an anonymous identity that survives a cleared
+cookie without asking anyone to sign in.

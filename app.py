@@ -30,6 +30,13 @@ STATIC = os.path.join(ROOT, "static")
 COOKIE = "notebook_session"
 ANON_COOKIE = "notebook_anon"
 ANON_COOKIE_DAYS = 3650  # a voter without an account is remembered by this cookie alone
+# A visitor with no cookie is about to be handed a fresh anonymous hand.
+# The cookie is still the whole of their identity, but handing them out
+# without limit makes clearing cookies a free ballot box: one address may
+# take a small number of new hands a day, which is plenty for a household
+# behind one address and tedious for anyone voting with a broom.
+ANON_HANDS_PER_IP = 8
+ANON_HANDS_WINDOW_MINUTES = 24 * 60
 CSRF_COOKIE = "notebook_csrf"
 CSRF_COOKIE_DAYS = 30
 BASE_URL = os.environ.get("NOTEBOOK_URL", "http://localhost:8420")
@@ -614,7 +621,24 @@ class Notebook(BaseHTTPRequestHandler):
         if user:
             db.toggle_vote(conn, int(raw_id), user_id=user["id"])
         else:
-            anon = self.anon_id() or secrets.token_urlsafe(16)
+            anon = self.anon_id()
+            if not anon:
+                # Somebody who already holds a hand may toggle all day; it
+                # is only the minting of a new one that is worth counting.
+                if db.rate_limited(
+                    conn, "anon-hand:%s" % self.client_ip(),
+                    ANON_HANDS_PER_IP, ANON_HANDS_WINDOW_MINUTES,
+                ):
+                    return self.reply(
+                        render.message_page(
+                            "Marked too often",
+                            "Too many new hands from one address today. Sign in and "
+                            "your marks are kept for good, or come back tomorrow.",
+                            link=self.back_to("/bet/%s" % raw_id),
+                        ),
+                        429,
+                    )
+                anon = secrets.token_urlsafe(16)
             db.toggle_vote(conn, int(raw_id), anon_id=anon)
             anon_cookie = anon  # (re)plant the cookie so this vote is remembered
         return self.go(self.back_to("/bet/%s" % raw_id), anon_cookie=anon_cookie)

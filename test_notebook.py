@@ -254,6 +254,35 @@ class TestAnonymousVoting(NotebookTestCase):
         self.assertEqual(votes_on(one.get("/bet/3").body), before + 2)
 
 
+class TestTheBroom(FreshNotebookTestCase):
+    """Clearing cookies still votes again - but not without end. Each of
+    these exhausts the day's new hands for 127.0.0.1, so they want a
+    notebook nobody else is voting in."""
+
+    HANDS = 8  # app.ANON_HANDS_PER_IP
+
+    def test_a_broom_runs_out_of_hands(self):
+        before = votes_on(self.notebook.visitor().get("/bet/1").body)
+        for _ in range(self.HANDS):
+            fresh = self.notebook.visitor()
+            self.assertEqual(fresh.post("/bet/1/vote", {}, csrf_from="/bet/1").status, 303)
+        self.assertEqual(votes_on(self.notebook.visitor().get("/bet/1").body), before + self.HANDS)
+
+        one_too_many = self.notebook.visitor()
+        self.assertEqual(one_too_many.post("/bet/1/vote", {}, csrf_from="/bet/1").status, 429)
+        self.assertIsNone(one_too_many.cookie("notebook_anon"))
+        self.assertEqual(votes_on(self.notebook.visitor().get("/bet/1").body), before + self.HANDS)
+
+    def test_a_hand_already_held_may_keep_changing_its_mind(self):
+        visitor = self.notebook.visitor()
+        before = votes_on(visitor.get("/bet/2").body)
+        for _ in range(self.HANDS * 3):
+            self.assertEqual(visitor.post("/bet/2/vote", {}, csrf_from="/bet/2").status, 303)
+        self.assertEqual(votes_on(visitor.get("/bet/2").body), before)  # an even number of minds
+        self.assertEqual(visitor.post("/bet/2/vote", {}, csrf_from="/bet/2").status, 303)
+        self.assertEqual(votes_on(visitor.get("/bet/2").body), before + 1)
+
+
 # --- csrf -----------------------------------------------------------------
 
 class TestCsrf(NotebookTestCase):

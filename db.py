@@ -368,7 +368,8 @@ def toggle_vote(conn, bet_id, user_id=None, anon_id=None):
     Anonymous votes are not deduplicated beyond the cookie: anyone who
     clears cookies or opens another browser can vote again. That is a
     deliberate trade for letting people without an account weigh in at
-    all - see README.
+    all - see README. What stops it being free is upstream, where a new
+    anonymous hand is handed out (app.ANON_HANDS_PER_IP).
     """
     assert (user_id is None) != (anon_id is None)
     column, value = ("user_id", user_id) if user_id is not None else ("anon_id", anon_id)
