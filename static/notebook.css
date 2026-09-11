@@ -229,6 +229,11 @@ button.danger:hover { background: var(--rubric); color: var(--paper); }
 .rules-list { margin: 0.6rem 0 1.2rem; padding-left: 1.1rem; }
 .rules-list li { margin: 0.45rem 0; }
 
+/* The house in short, put in front of a first-time hand. */
+.first-time h3 { margin: 0 0 0.2rem; font-size: 1rem; letter-spacing: 0.02em; }
+.first-time .rules-list { margin-bottom: 0.6rem; }
+.first-time p:last-child { margin: 0; font-size: 0.9rem; color: var(--ink-faded); }
+
 /* --- keeping the ledger ------------------------------------------------ */
 
 .entry.struck { opacity: 0.62; }

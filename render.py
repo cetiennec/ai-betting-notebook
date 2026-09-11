@@ -306,7 +306,27 @@ def bet_page(bet, user, csrf, note=""):
     return layout(bet["claim"][:60], body, user)
 
 
-def propose_page(user, csrf, values=None, error=""):
+# Put in front of anyone writing their first bet. The full rules are at
+# /house; this is the part that changes what somebody is about to write.
+FIRST_TIME_RULES = """<div class="notice plain first-time">
+  <h3>Your first bet &mdash; the house in short</h3>
+  <ul class="rules-list">
+    <li><b>A bet, not a banner.</b> Write what you <i>expect</i>, not what you
+        want. The notebook takes no side on whether any future here is a good
+        one, and nothing is struck for being unwelcome or probably wrong.</li>
+    <li><b>Something a stranger could settle.</b> In ten years somebody who has
+        never met you should be able to say whether you were right, without
+        having to ask what you meant.</li>
+    <li><b>A year to judge it by.</b> A bet with no horizon is an opinion.</li>
+    <li><b>Your reasoning is the point.</b> Say what would prove you wrong;
+        that is what makes the entry worth reading later.</li>
+  </ul>
+  <p>The <a href="/house">house rules</a> say all of it, including what does
+     get struck. You will not be shown this again.</p>
+</div>"""
+
+
+def propose_page(user, csrf, values=None, error="", first_time=False):
     values = values or {}
     year = db.now().year
     options = "".join(
@@ -314,11 +334,12 @@ def propose_page(user, csrf, values=None, error=""):
         for c in db.CATEGORIES
     )
     note = '<div class="notice">%s</div>' % e(error) if error else ""
+    lede = FIRST_TIME_RULES if first_time else """<p class="lede">State it so that in ten years a stranger could tell whether you were right.
+   A bet is not a banner: what you expect, not what you want &mdash;
+   the <a href="/house">house rules</a> put it at more length.</p>"""
     body = """%(note)s
 <h2>Propose a bet</h2>
-<p class="lede">State it so that in ten years a stranger could tell whether you were right.
-   A bet is not a banner: what you expect, not what you want &mdash;
-   the <a href="/house">house rules</a> put it at more length.</p>
+%(lede)s
 <form method="post" action="/propose">
   %(csrf)s
   <label class="field"><span class="name">The claim</span>
@@ -337,6 +358,7 @@ def propose_page(user, csrf, values=None, error=""):
   <div class="deeds"><button type="submit">Write it into the ledger</button></div>
 </form>""" % {
         "note": note,
+        "lede": lede,
         "csrf": csrf_field(csrf),
         "claim": e(values.get("claim", "")),
         "reasoning": e(values.get("reasoning", "")),

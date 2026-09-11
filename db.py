@@ -353,6 +353,15 @@ def create_bet(conn, user_id, claim, reasoning, category, horizon, anonymous):
     return cur.lastrowid
 
 
+def has_written(conn, user_id):
+    """Has this hand ever written a bet? A struck one still counts - they
+    have been here before, and the rules were put in front of them then."""
+    row = conn.execute(
+        "SELECT 1 FROM bets WHERE user_id = ? LIMIT 1", (user_id,)
+    ).fetchone()
+    return row is not None
+
+
 def resolve_bet(conn, bet_id, user_id, status, verdict):
     with conn:
         conn.execute(

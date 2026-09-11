@@ -32,7 +32,7 @@ python3 app.py send-letters --force --email you@example.org   # see one now
 
 | | |
 |---|---|
-| **Propose** | a claim, the reasoning behind it, a subject, and the year by which it should be judged |
+| **Propose** | a claim, the reasoning behind it, a subject, and the year by which it should be judged. A hand writing its first bet gets the house rules in short above the form, once |
 | **Vote** | one "interesting" mark per bet, toggleable; the ledger sorts by it. No account needed — a signed-in vote is tied to your user, an anonymous one to a browser cookie, and neither is strongly deduplicated beyond that |
 | **Subjects** | twelve categories — education, politics & governance, work & economy, information & trust, science & technology, health & medicine, art & culture, everyday life, war & security, climate & environment, law & rights, love & friendship |
 | **Search** | one box for words, a box beside it for the subject; both combine with standing and order |

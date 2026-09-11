@@ -271,7 +271,9 @@ class Notebook(BaseHTTPRequestHandler):
             if path == "/propose":
                 if not user:
                     return self.go("/enter")
-                return self.reply(render.propose_page(user, self.csrf_token()))
+                return self.reply(render.propose_page(
+                    user, self.csrf_token(), first_time=not db.has_written(conn, user["id"])
+                ))
             if path == "/enter":
                 return self.reply(render.enter_page(self.csrf_token()))
             if path.startswith("/enter/"):
@@ -582,29 +584,33 @@ class Notebook(BaseHTTPRequestHandler):
             "horizon": horizon, "anonymous": anonymous,
         }
         year = db.now().year
+        # Still their first: the rules stay up while they fix whatever
+        # the notebook has just complained about.
+        first = not db.has_written(conn, user["id"])
 
         if len(claim) < 12:
             return self.reply(
-                render.propose_page(user, self.csrf_token(), values, "A bet needs to be a whole claim."),
+                render.propose_page(user, self.csrf_token(), values,
+                                    "A bet needs to be a whole claim.", first),
                 400,
             )
         if len(claim) > MAX_CLAIM:
             return self.reply(
                 render.propose_page(
                     user, self.csrf_token(), values,
-                    "A claim wants %d characters at most." % MAX_CLAIM,
+                    "A claim wants %d characters at most." % MAX_CLAIM, first,
                 ),
                 400,
             )
         if category not in db.CATEGORIES:
             return self.reply(
-                render.propose_page(user, self.csrf_token(), values, "Pick a subject."), 400
+                render.propose_page(user, self.csrf_token(), values, "Pick a subject.", first), 400
             )
         if not horizon.isdigit() or not year <= int(horizon) <= year + 75:
             return self.reply(
                 render.propose_page(
                     user, self.csrf_token(), values,
-                    "The horizon must be a year between %d and %d." % (year, year + 75),
+                    "The horizon must be a year between %d and %d." % (year, year + 75), first,
                 ),
                 400,
             )

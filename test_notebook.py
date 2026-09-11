@@ -389,6 +389,31 @@ class TestProposing(NotebookTestCase):
         page = visitor.get(reply.headers["Location"]).body
         self.assertEqual(votes_on(page), 1)
 
+    def test_a_first_time_hand_is_shown_the_house(self):
+        visitor = self.signed_in("newcomer@example.org")
+        page = visitor.get("/propose").body
+        self.assertIn("the house in short", page)
+        self.assertIn('href="/house"', page)
+
+        visitor.post("/propose", {
+            "claim": "By 2034 a newcomer will have been told the rules exactly once.",
+            "reasoning": "Because that is what this test is for.",
+            "category": "everyday life",
+            "horizon": "2034",
+        })
+        self.assertNotIn("the house in short", visitor.get("/propose").body)
+
+    def test_the_house_stays_up_while_a_first_bet_is_refused(self):
+        visitor = self.signed_in("stumbling@example.org")
+        reply = visitor.post("/propose", {
+            "claim": "too short",
+            "reasoning": "",
+            "category": "education",
+            "horizon": "2033",
+        })
+        self.assertEqual(reply.status, 400)
+        self.assertIn("the house in short", reply.body)
+
     def test_a_claim_that_is_too_long_is_refused(self):
         visitor = self.signed_in("windy@example.org")
         reply = visitor.post("/propose", {
