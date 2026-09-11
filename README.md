@@ -1,7 +1,7 @@
 # The Future with AI — Betting Notebook
 
-Take your bet on what you think the future will look like; get reminded in a few
-years to observe what happened.
+Take your bet on what you think the future with AI will look like; get reminded
+in a few years to observe what happened.
 
 People write a bet down, say by when it should be judged, and vote on the ones
 worth watching. Once a year the notebook writes back to tell you what has come

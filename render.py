@@ -6,7 +6,7 @@ from urllib.parse import urlencode
 import db
 
 TAGLINE = (
-    "Take your bet on what you think the future will look like,\n"
+    "Take your bet on what you think the future with AI will look like,\n"
     "    get reminded in a few years to observe what happened"
 )
 
