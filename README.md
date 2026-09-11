@@ -41,6 +41,8 @@ python3 app.py send-letters --force --email you@example.org   # see one now
 | **Print** | *your copies*, at your desk: your own bets, the ones you backed, or the whole ledger — as a print sheet or plain text. Any search or subject you are looking at prints the same way from the foot of the ledger |
 | **Settle** | the author of a bet can record how it turned out, with a line on why |
 | **Yearly letter** | opt in at your desk: one letter a year with your bets, the ones you backed, and which have come due |
+| **House rules** | `/house` — what the place is for, in plain words: a bet is what you *expect*, not what you *want*, and the notebook takes no side on whether any future here is a good one |
+| **Keeping it** | `/keep` — the moderation desk, for whoever is named in `NOTEBOOK_KEEPERS` |
 
 Taking a copy is something you do in your own space rather than in the public
 hall: **your copies** lives at your desk, and the foot of the ledger will print
@@ -60,6 +62,26 @@ static/notebook.css    the whole look — paper, ink, and the print rules
 data/                  SQLite file + outbox   (git-ignored, safe to delete)
 Dockerfile, fly.toml   how it is deployed
 ```
+
+## Keeping the ledger
+
+Moderation lives at `/keep`, and only for the addresses named here:
+
+```sh
+export NOTEBOOK_KEEPERS="you@yourdomain,someone.else@yourdomain"
+```
+
+There is deliberately no way to become a keeper from inside the notebook —
+the list is read from the environment and nowhere else. To anyone not on it,
+`/keep` is a blank page rather than a locked door: a stranger has no business
+learning that the notebook has a keeper at all.
+
+A keeper can **strike** an entry (a line ruled through it — it leaves the
+ledger, keeps a reason, and can be put back), **burn** one (gone for good,
+asked twice on a page of its own), or strike **everything by one hand** when
+somebody turns out to be a spammer. A keeper's own hand cannot be struck from
+the desk. What belongs in the book, and what does not, is written out for
+everyone at `/house`.
 
 ## Tests
 

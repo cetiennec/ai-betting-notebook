@@ -221,6 +221,47 @@ button.vote.cast { border-style: solid; background: var(--ink); color: var(--pap
 form.inline { display: inline; }
 .deeds { margin-top: 1.6rem; display: flex; gap: 0.6rem; flex-wrap: wrap; }
 
+button.danger { border-style: dashed; color: var(--rubric); border-color: var(--rubric); }
+button.danger:hover { background: var(--rubric); color: var(--paper); }
+
+/* --- the house rules --------------------------------------------------- */
+
+.rules-list { margin: 0.6rem 0 1.2rem; padding-left: 1.1rem; }
+.rules-list li { margin: 0.45rem 0; }
+
+/* --- keeping the ledger ------------------------------------------------ */
+
+.entry.struck { opacity: 0.62; }
+.entry.struck .claim a { text-decoration: line-through; }
+
+.entry .deeds { margin-top: 0.7rem; gap: 0.5rem; align-items: center; }
+.deeds form.inline { display: inline-flex; gap: 0.35rem; align-items: center; }
+.deeds input[type=text] {
+  width: auto;
+  max-width: 15rem;
+  font-size: 0.88rem;
+  padding: 0.22rem 0.45rem;
+}
+.deeds button { white-space: nowrap; }
+
+table.hands {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 0.8rem;
+  font-size: 0.94rem;
+}
+table.hands th {
+  text-align: left;
+  font-variant: small-caps;
+  font-weight: normal;
+  letter-spacing: 0.07em;
+  color: var(--ink-faded);
+  border-bottom: 1px solid var(--rule);
+  padding: 0.3rem 0.5rem 0.3rem 0;
+}
+table.hands td { padding: 0.35rem 0.5rem 0.35rem 0; border-bottom: 1px dotted var(--rule); }
+table.hands .n { text-align: right; width: 5rem; }
+
 /* --- single bet -------------------------------------------------------- */
 
 .bet-sheet .claim { font-size: 1.5rem; line-height: 1.35; margin: 1.4rem 0 0.5rem; }

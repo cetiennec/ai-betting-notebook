@@ -16,6 +16,18 @@ DB_PATH = os.environ.get("NOTEBOOK_DB", os.path.join(DATA_DIR, "notebook.sqlite3
 SESSION_DAYS = 90
 LOGIN_TOKEN_MINUTES = 60
 
+# Who keeps the ledger. Named in the environment and nowhere else: there is
+# deliberately no way to make yourself one of these from inside the notebook.
+KEEPERS = {
+    address.strip().lower()
+    for address in os.environ.get("NOTEBOOK_KEEPERS", "").split(",")
+    if address.strip()
+}
+
+
+def is_keeper(user):
+    return bool(user) and (user["email"] or "").lower() in KEEPERS
+
 CATEGORIES = [
     "education",
     "politics & governance",
@@ -73,7 +85,9 @@ CREATE TABLE IF NOT EXISTS bets (
     status     TEXT NOT NULL DEFAULT 'open',
     verdict    TEXT NOT NULL DEFAULT '',
     resolved_at TEXT,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    removed_at TEXT,
+    removed_why TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS votes (
@@ -130,6 +144,12 @@ def connect():
 
 def _migrate(conn):
     """One-off shims for databases created before a schema change."""
+    bet_cols = [row[1] for row in conn.execute("PRAGMA table_info(bets)").fetchall()]
+    if bet_cols and "removed_at" not in bet_cols:
+        with conn:
+            conn.execute("ALTER TABLE bets ADD COLUMN removed_at TEXT")
+            conn.execute("ALTER TABLE bets ADD COLUMN removed_why TEXT NOT NULL DEFAULT ''")
+
     cols = [row[1] for row in conn.execute("PRAGMA table_info(votes)").fetchall()]
     if cols and "anon_id" not in cols:
         with conn:
@@ -292,9 +312,14 @@ SORTS = {
 }
 
 
-def list_bets(conn, viewer_id=0, query="", category="", status="", sort="interesting", viewer_anon=""):
+def list_bets(conn, viewer_id=0, query="", category="", status="", sort="interesting",
+              viewer_anon="", struck=False):
+    """The ledger. Struck entries are left out of it unless asked for by
+    name, which only the moderation desk does."""
     sql = BET_SELECT
     where, args = [], [viewer_id or 0, viewer_anon or ""]
+    if not struck:
+        where.append("b.removed_at IS NULL")
     if query:
         where.append("(b.claim LIKE ? OR b.reasoning LIKE ? OR b.category LIKE ?)")
         like = "%%%s%%" % query
@@ -311,10 +336,11 @@ def list_bets(conn, viewer_id=0, query="", category="", status="", sort="interes
     return conn.execute(sql, args).fetchall()
 
 
-def get_bet(conn, bet_id, viewer_id=0, viewer_anon=""):
-    return conn.execute(
-        BET_SELECT + " WHERE b.id = ?", (viewer_id or 0, viewer_anon or "", bet_id)
-    ).fetchone()
+def get_bet(conn, bet_id, viewer_id=0, viewer_anon="", struck=False):
+    sql = BET_SELECT + " WHERE b.id = ?"
+    if not struck:
+        sql += " AND b.removed_at IS NULL"
+    return conn.execute(sql, (viewer_id or 0, viewer_anon or "", bet_id)).fetchone()
 
 
 def create_bet(conn, user_id, claim, reasoning, category, horizon, anonymous):
@@ -362,14 +388,67 @@ def toggle_vote(conn, bet_id, user_id=None, anon_id=None):
 
 def category_counts(conn):
     rows = conn.execute(
-        "SELECT category, COUNT(*) AS n FROM bets GROUP BY category ORDER BY n DESC, category"
+        """SELECT category, COUNT(*) AS n FROM bets WHERE removed_at IS NULL
+           GROUP BY category ORDER BY n DESC, category"""
     ).fetchall()
     return [(r["category"], r["n"]) for r in rows]
 
 
+# --- the moderation desk --------------------------------------------------
+
+def strike_bet(conn, bet_id, why):
+    """Rule a line through an entry: gone from the ledger, still on the
+    page. Reversible, because moderation is a judgement and judgements
+    are sometimes wrong."""
+    with conn:
+        conn.execute(
+            "UPDATE bets SET removed_at = ?, removed_why = ? WHERE id = ?",
+            (stamp(), why[:500], bet_id),
+        )
+
+
+def restore_bet(conn, bet_id):
+    with conn:
+        conn.execute(
+            "UPDATE bets SET removed_at = NULL, removed_why = '' WHERE id = ?", (bet_id,)
+        )
+
+
+def burn_bet(conn, bet_id):
+    """Take the page out altogether. For the things that should not sit
+    in the ledger at all; there is no getting this one back."""
+    with conn:
+        conn.execute("DELETE FROM votes WHERE bet_id = ?", (bet_id,))
+        conn.execute("DELETE FROM bets WHERE id = ?", (bet_id,))
+
+
+def strike_everything_by(conn, user_id, why):
+    """One hand turned out to be a spammer: strike the lot in one go."""
+    with conn:
+        cur = conn.execute(
+            """UPDATE bets SET removed_at = ?, removed_why = ?
+               WHERE user_id = ? AND removed_at IS NULL""",
+            (stamp(), why[:500], user_id),
+        )
+    return cur.rowcount
+
+
+def people(conn):
+    """Everyone, with what they have written, for the moderation desk."""
+    return conn.execute(
+        """SELECT u.*,
+                  (SELECT COUNT(*) FROM bets b
+                    WHERE b.user_id = u.id AND b.removed_at IS NULL) AS standing,
+                  (SELECT COUNT(*) FROM bets b
+                    WHERE b.user_id = u.id AND b.removed_at IS NOT NULL) AS struck
+           FROM users u ORDER BY u.id DESC"""
+    ).fetchall()
+
+
 def tally(conn):
     row = conn.execute(
-        """SELECT (SELECT COUNT(*) FROM bets) AS bets,
+        """SELECT (SELECT COUNT(*) FROM bets WHERE removed_at IS NULL) AS bets,
+                  (SELECT COUNT(*) FROM bets WHERE removed_at IS NOT NULL) AS struck,
                   (SELECT COUNT(*) FROM users) AS people,
                   (SELECT COUNT(*) FROM votes) AS votes"""
     ).fetchone()

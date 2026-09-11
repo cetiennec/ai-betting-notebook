@@ -39,6 +39,7 @@ SECURE_COOKIES = BASE_URL.startswith("https://")
 # Set this only when a proxy you trust is in front and rewrites the
 # forwarding header itself. Fly is recognised without it.
 TRUST_FORWARDED = os.environ.get("NOTEBOOK_TRUST_FORWARDED") == "1"
+is_keeper = db.is_keeper  # who may keep the ledger; see NOTEBOOK_KEEPERS
 # Nobody needs to post more than a long bet; refuse the rest unread.
 MAX_BODY_BYTES = 64 * 1024
 MAX_CLAIM = 240
@@ -81,8 +82,9 @@ class Notebook(BaseHTTPRequestHandler):
         self.send_header("Referrer-Policy", "same-origin")
         self.send_header(
             "Content-Security-Policy",
-            "default-src 'none'; style-src 'self'; img-src 'self' data:; "
-            "form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+            "default-src 'none'; style-src 'self'; script-src 'self'; "
+            "img-src 'self' data:; form-action 'self'; base-uri 'none'; "
+            "frame-ancestors 'none'",
         )
         if SECURE_COOKIES:
             self.send_header("Strict-Transport-Security", "max-age=31536000")
@@ -228,7 +230,10 @@ class Notebook(BaseHTTPRequestHandler):
         path = os.path.join(STATIC, safe)
         if not os.path.isfile(path) or not os.path.abspath(path).startswith(STATIC):
             return self.reply(render.message_page("Nothing here", "No such file."), 404)
-        kind = "text/css" if path.endswith(".css") else "application/octet-stream"
+        kind = {
+            ".css": "text/css",
+            ".js": "text/javascript",
+        }.get(os.path.splitext(path)[1], "application/octet-stream")
         with open(path, "rb") as fh:
             payload = fh.read()
         self.send_response(HTTPStatus.OK)
@@ -273,6 +278,10 @@ class Notebook(BaseHTTPRequestHandler):
                 if not user:
                     return self.go("/enter")
                 return self.reply(self.desk(conn, user))
+            if path == "/house":
+                return self.reply(render.house_page(user))
+            if path == "/keep":
+                return self.page_keep(conn, user, args)
             if path == "/print":
                 return self.page_print(conn, user, args)
             if path == "/export.txt":
@@ -319,6 +328,8 @@ class Notebook(BaseHTTPRequestHandler):
                 return self.post_vote(conn, user, path.split("/")[2])
             if path.startswith("/bet/") and path.endswith("/resolve"):
                 return self.post_resolve(conn, user, path.split("/")[2], form)
+            if path == "/keep":
+                return self.post_keep(conn, user, form)
 
             return self.reply(render.message_page("A blank page", "Nothing accepts that."), 404)
         finally:
@@ -351,10 +362,14 @@ class Notebook(BaseHTTPRequestHandler):
     def page_bet(self, conn, user, raw_id):
         if not raw_id.isdigit():
             return self.reply(render.message_page("A blank page", "No such entry."), 404)
-        bet = db.get_bet(conn, int(raw_id), user["id"] if user else 0, self.anon_id())
+        # A struck entry is gone for everyone but the keeper, who may still
+        # want to look at what they struck.
+        bet = db.get_bet(
+            conn, int(raw_id), user["id"] if user else 0, self.anon_id(), struck=is_keeper(user)
+        )
         if bet is None:
             return self.reply(
-                render.message_page("A torn page", "That entry is not in the ledger."), 404
+                render.message_page("A torn page", "That entry is not in the ledger.", user), 404
             )
         return self.reply(render.bet_page(bet, user, self.csrf_token()))
 
@@ -420,6 +435,77 @@ class Notebook(BaseHTTPRequestHandler):
                 lines.append("    VERDICT: %s" % b["verdict"].strip())
             lines += ["    %s/bet/%d" % (BASE_URL, b["id"]), ""]
         return self.send_text("\n".join(lines), filename="betting-notebook.txt")
+
+    # --- the moderation desk ----------------------------------------------
+
+    def page_keep(self, conn, user, args, note="", error=""):
+        if not is_keeper(user):
+            return self.no_entry(user)
+        query = args.get("q", "")
+        return self.reply(
+            render.keep_page(
+                user, self.csrf_token(), db.tally(conn),
+                db.list_bets(conn, user["id"], query, sort="newest", struck=True),
+                db.people(conn), query, note, error,
+            )
+        )
+
+    def no_entry(self, user):
+        """The same answer whether or not the door exists: a stranger has
+        no business learning that this notebook has a keeper at all."""
+        return self.reply(
+            render.message_page("A blank page", "There is nothing written at /keep.", user), 404
+        )
+
+    def post_keep(self, conn, user, form):
+        if not is_keeper(user):
+            return self.no_entry(user)
+
+        deed = form.get("deed", "")
+        why = form.get("why", "").strip()
+        raw_id = form.get("bet", "")
+        note = ""
+
+        if deed in ("strike", "restore", "burn", "burn-for-good"):
+            if not raw_id.isdigit():
+                return self.page_keep(conn, user, {}, error="No such entry.")
+            bet = db.get_bet(conn, int(raw_id), user["id"], struck=True)
+            if bet is None:
+                return self.page_keep(conn, user, {}, error="No such entry.")
+            if deed == "strike":
+                db.strike_bet(conn, bet["id"], why)
+                note = "Entry %d is struck from the ledger%s" % (
+                    bet["id"], (" - %s." % why) if why else "."
+                )
+            elif deed == "restore":
+                db.restore_bet(conn, bet["id"])
+                note = "Entry %d is back in the ledger." % bet["id"]
+            elif deed == "burn":
+                # Ask once more, on a page of its own.
+                return self.reply(render.burn_page(user, self.csrf_token(), bet))
+            else:
+                db.burn_bet(conn, bet["id"])
+                note = "Entry %d is gone for good." % bet["id"]
+
+        elif deed == "strike-hand":
+            raw_hand = form.get("hand", "")
+            if not raw_hand.isdigit():
+                return self.page_keep(conn, user, {}, error="No such hand.")
+            hand = db.user_by_id(conn, int(raw_hand))
+            if hand is None:
+                return self.page_keep(conn, user, {}, error="No such hand.")
+            if is_keeper(hand):
+                return self.page_keep(
+                    conn, user, {}, error="A keeper's own hand is not struck from here."
+                )
+            struck = db.strike_everything_by(conn, hand["id"], why)
+            note = "Struck %d %s by %s." % (
+                struck, "entry" if struck == 1 else "entries", hand["pseudo"]
+            )
+        else:
+            return self.page_keep(conn, user, {}, error="That is not a thing to do.")
+
+        return self.page_keep(conn, user, {}, note=note)
 
     def desk(self, conn, user, note="", error=""):
         mine = db.list_bets(conn, user["id"], sort="newest")

@@ -165,7 +165,8 @@ def votes_on(html):
 
 
 class NotebookTestCase(unittest.TestCase):
-    """One notebook per class, since starting one costs a second."""
+    """One notebook per class, since starting one costs a moment. Only for
+    tests that leave the ledger as they found it."""
 
     env = {}
     seed = True
@@ -177,6 +178,28 @@ class NotebookTestCase(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.notebook.stop()
+
+
+class FreshNotebookTestCase(unittest.TestCase):
+    """A notebook of its own for every test. For the ones that strike
+    entries or burn them, where what the last test did would otherwise be
+    waiting for the next one."""
+
+    env = {}
+
+    def setUp(self):
+        self.notebook = Notebook(**self.env)
+
+    def tearDown(self):
+        self.notebook.stop()
+
+    def signed_in(self, email):
+        visitor = self.notebook.visitor()
+        reply = visitor.post("/enter", {"email": email})
+        link = re.search(r"%s(/enter/[A-Za-z0-9_-]+)" % re.escape(self.notebook.base), reply.body)
+        self.assertIsNotNone(link, "no key was offered for %s: %s" % (email, reply.status))
+        visitor.get(link.group(1))
+        return visitor
 
 
 # --- the ledger itself ----------------------------------------------------
@@ -527,6 +550,134 @@ class TestSecureCookies(unittest.TestCase):
 
 
 # --- the ledger on disk ---------------------------------------------------
+
+# --- the house rules ------------------------------------------------------
+
+class TestHouseRules(NotebookTestCase):
+    def test_the_rules_are_there_for_anyone_to_read(self):
+        reply = self.notebook.visitor().get("/house")
+        self.assertEqual(reply.status, 200)
+        self.assertIn("A bet is not a wish", reply.body)
+
+    def test_every_page_points_at_them(self):
+        self.assertIn('href="/house"', self.notebook.visitor().get("/").body)
+
+
+# --- keeping the ledger ---------------------------------------------------
+
+KEEPER = "keeper@example.org"
+
+
+class TestTheDoorIsShut(NotebookTestCase):
+    """With nobody named as a keeper, the desk is not there at all."""
+
+    def test_a_stranger_finds_nothing(self):
+        self.assertEqual(self.notebook.visitor().get("/keep").status, 404)
+
+    def test_a_signed_in_reader_finds_nothing_either(self):
+        visitor = self.notebook.visitor()
+        reply = visitor.post("/enter", {"email": "nosy@example.org"})
+        link = re.search(r"%s(/enter/[A-Za-z0-9_-]+)" % re.escape(self.notebook.base), reply.body)
+        visitor.get(link.group(1))
+        self.assertEqual(visitor.get("/keep").status, 404)
+
+    def test_and_cannot_strike_anything_by_posting(self):
+        visitor = self.notebook.visitor()
+        reply = visitor.post("/enter", {"email": "pushy@example.org"})
+        link = re.search(r"%s(/enter/[A-Za-z0-9_-]+)" % re.escape(self.notebook.base), reply.body)
+        visitor.get(link.group(1))
+        struck = visitor.post("/keep", {"deed": "strike", "bet": "1", "why": "mine now"},
+                              csrf_from="/")
+        self.assertEqual(struck.status, 404)
+        self.assertEqual(self.notebook.visitor().get("/bet/1").status, 200)
+
+
+class TestKeepingTheLedger(FreshNotebookTestCase):
+    env = {"NOTEBOOK_KEEPERS": KEEPER}
+
+    def keeper(self):
+        return self.signed_in(KEEPER)
+
+    def test_the_keeper_is_let_in_and_nobody_else(self):
+        self.assertEqual(self.keeper().get("/keep").status, 200)
+        self.assertEqual(self.signed_in("reader@example.org").get("/keep").status, 404)
+
+    def test_only_the_keeper_is_offered_the_door(self):
+        self.assertIn('href="/keep"', self.keeper().get("/").body)
+        self.assertNotIn('href="/keep"', self.signed_in("plain@example.org").get("/").body)
+
+    def test_a_struck_entry_leaves_the_ledger_and_can_come_back(self):
+        keeper = self.keeper()
+        stranger = self.notebook.visitor()
+
+        keeper.post("/keep", {"deed": "strike", "bet": "5", "why": "not a bet"},
+                    csrf_from="/keep")
+        self.assertEqual(stranger.get("/bet/5").status, 404)
+        self.assertNotIn("/bet/5", stranger.get("/").body)
+        # the keeper can still look at what they struck
+        self.assertEqual(keeper.get("/bet/5").status, 200)
+
+        keeper.post("/keep", {"deed": "restore", "bet": "5"}, csrf_from="/keep")
+        self.assertEqual(stranger.get("/bet/5").status, 200)
+
+    def test_a_struck_entry_is_out_of_the_counts_and_the_copies(self):
+        keeper = self.keeper()
+        before = self.notebook.visitor().get("/export.txt").body
+        self.assertIn("oral examination", before)
+        keeper.post("/keep", {"deed": "strike", "bet": "2", "why": "spam"}, csrf_from="/keep")
+        after = self.notebook.visitor().get("/export.txt").body
+        self.assertNotIn("oral examination", after)
+        keeper.post("/keep", {"deed": "restore", "bet": "2"}, csrf_from="/keep")
+
+    def test_the_reason_is_kept_with_the_entry(self):
+        keeper = self.keeper()
+        keeper.post("/keep", {"deed": "strike", "bet": "6", "why": "a slogan, not a wager"},
+                    csrf_from="/keep")
+        self.assertIn("a slogan, not a wager", keeper.get("/keep").body)
+        keeper.post("/keep", {"deed": "restore", "bet": "6"}, csrf_from="/keep")
+
+    def test_burning_is_asked_twice(self):
+        keeper = self.keeper()
+        asked = keeper.post("/keep", {"deed": "burn", "bet": "7"}, csrf_from="/keep")
+        self.assertEqual(asked.status, 200)
+        self.assertIn("no getting it back", asked.body)
+        # nothing has happened yet
+        self.assertEqual(self.notebook.visitor().get("/bet/7").status, 200)
+
+        keeper.post("/keep", {"deed": "burn-for-good", "bet": "7"}, csrf_from="/keep")
+        self.assertEqual(self.notebook.visitor().get("/bet/7").status, 404)
+
+    def test_a_whole_hand_can_be_struck_at_once(self):
+        keeper = self.keeper()
+        page = keeper.get("/keep").body
+        hand = re.search(r'name="hand" value="(\d+)"', page)
+        self.assertIsNotNone(hand, "no hand was offered to strike")
+        reply = keeper.post("/keep", {"deed": "strike-hand", "hand": hand.group(1),
+                                      "why": "spam"}, csrf_from="/keep")
+        self.assertEqual(reply.status, 200)
+        self.assertIn("Struck", reply.body)
+
+    def test_a_keeper_cannot_be_struck_from_the_desk(self):
+        keeper = self.keeper()
+        keeper.post("/propose", {
+            "claim": "By 2035 the keeper will still be keeping this ledger.",
+            "reasoning": "", "category": "everyday life", "horizon": "2035",
+        })
+        page = keeper.get("/keep").body
+        rows = re.findall(r'name="hand" value="(\d+)"', page)
+        # find the keeper's own row by striking each and checking the refusal
+        refusals = [
+            keeper.post("/keep", {"deed": "strike-hand", "hand": h, "why": "x"},
+                        csrf_from="/keep").body
+            for h in rows
+        ]
+        self.assertTrue(
+            any("is not struck from here" in r for r in refusals),
+            "the keeper's own hand was not protected",
+        )
+        # and the keeper's own bet is still standing
+        self.assertIn("still be keeping this ledger", keeper.get("/").body)
+
 
 class TestLedgerUpgrades(unittest.TestCase):
     """A ledger written before anonymous voting must still open."""

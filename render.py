@@ -38,9 +38,12 @@ def layout(title, body, user=None, wide_footer=True):
             '<a href="/desk#copies">your copies</a>'
             '<a href="/leave">sign out</a>'
         )
+        if db.is_keeper(user):
+            room += '<a href="/keep">keep the ledger</a>'
     else:
         who = "not signed"
         room = '<a href="/enter">sign in</a>'
+    room += '<a href="/house">house rules</a>'
     return """<!doctype html>
 <html lang="en">
 <head>
@@ -49,6 +52,7 @@ def layout(title, body, user=None, wide_footer=True):
 <title>%(title)s &middot; The Future with AI Betting Notebook</title>
 <link rel="stylesheet" href="/static/notebook.css">
 <link rel="icon" href="data:,">
+<script src="/static/notebook.js" defer></script>
 </head>
 <body>
 <div class="sheet">
@@ -312,7 +316,9 @@ def propose_page(user, csrf, values=None, error=""):
     note = '<div class="notice">%s</div>' % e(error) if error else ""
     body = """%(note)s
 <h2>Propose a bet</h2>
-<p class="lede">State it so that in ten years a stranger could tell whether you were right.</p>
+<p class="lede">State it so that in ten years a stranger could tell whether you were right.
+   A bet is not a banner: what you expect, not what you want &mdash;
+   the <a href="/house">house rules</a> put it at more length.</p>
 <form method="post" action="/propose">
   %(csrf)s
   <label class="field"><span class="name">The claim</span>
@@ -450,6 +456,231 @@ def desk_page(user, csrf, mine, backed, note="", error=""):
     return layout("Your desk", body, user)
 
 
+def keep_page(user, csrf, counts, bets, hands, query="", note="", error=""):
+    """The moderation desk: every entry, struck or standing, and the hands
+    that wrote them."""
+    banner = ""
+    if note:
+        banner = '<div class="notice plain">%s</div>' % e(note)
+    if error:
+        banner += '<div class="notice">%s</div>' % e(error)
+
+    def deed(label, deed_name, bet_id, why_box=False, danger=False):
+        """One button, and nothing clever: no script has to run for the
+        moderation desk to work."""
+        reason = (
+            '<input type="text" name="why" maxlength="200" placeholder="why, for the record">'
+            if why_box else '<input type="hidden" name="why" value="">'
+        )
+        return (
+            '<form method="post" action="/keep" class="inline">%s'
+            '<input type="hidden" name="deed" value="%s">'
+            '<input type="hidden" name="bet" value="%d">%s'
+            '<button type="submit" class="%s">%s</button></form>'
+            % (csrf_field(csrf), deed_name, bet_id, reason, "danger" if danger else "", label)
+        )
+
+    entries = []
+    for b in bets:
+        struck = bool(b["removed_at"])
+        deeds = (
+            deed("Put it back", "restore", b["id"])
+            if struck
+            else deed("Strike it", "strike", b["id"], why_box=True)
+        )
+        # Burning cannot be undone, so it is asked twice - on a page of its
+        # own, not in a dialog that needs script to appear.
+        deeds += deed("Burn it", "burn", b["id"], danger=True)
+        entries.append(
+            """<li class="entry%(cls)s">
+  <div class="tally"><span class="count">%(votes)d</span><span class="word">%(word)s</span></div>
+  <div>
+    <p class="claim"><a href="/bet/%(id)d">%(claim)s</a>%(mark)s</p>
+    <p class="meta"><span class="cat">%(cat)s</span> &middot; by %(year)d &middot;
+       written by %(who)s, %(when)s &middot; entry %(id)d</p>
+    %(why)s
+    <div class="deeds no-print">%(deeds)s</div>
+  </div>
+</li>""" % {
+                "cls": " struck" if struck else "",
+                "votes": b["votes"],
+                "word": "vote" if b["votes"] == 1 else "votes",
+                "id": b["id"],
+                "claim": e(b["claim"]),
+                "mark": ' <span class="stamp">struck out</span>' if struck else status_stamp(b),
+                "cat": e(b["category"]),
+                "year": b["horizon"],
+                "who": e(db.byline(b)),
+                "when": date_of(b["created_at"]),
+                "why": '<p class="hint">Struck %s%s</p>' % (
+                    date_of(b["removed_at"]),
+                    " &mdash; %s" % e(b["removed_why"]) if b["removed_why"] else "",
+                ) if struck else "",
+                "deeds": deeds,
+            }
+        )
+
+    rows = []
+    for h in hands:
+        rows.append(
+            """<tr><td>%(pseudo)s</td><td class="n">%(standing)d</td>
+               <td class="n">%(struck)d</td><td>%(since)s</td><td>%(deed)s</td></tr>"""
+            % {
+                "pseudo": e(h["pseudo"]),
+                "standing": h["standing"],
+                "struck": h["struck"],
+                "since": date_of(h["created_at"]),
+                "deed": (
+                    '<form method="post" action="/keep" class="inline">%s'
+                    '<input type="hidden" name="deed" value="strike-hand">'
+                    '<input type="hidden" name="hand" value="%d">'
+                    '<input type="hidden" name="why" value="everything by this hand">'
+                    '<button type="submit">Strike all</button></form>'
+                    % (csrf_field(csrf), h["id"])
+                ) if h["standing"] else '<span class="hint">nothing standing</span>',
+            }
+        )
+
+    body = """%(banner)s
+<h2>Keeping the ledger</h2>
+<p class="lede">%(bets)d standing, %(struck)d struck out, %(people)d %(hands)s,
+   %(votes)d %(marks)s. The <a href="/house">house rules</a> say what belongs
+   here; this is where that is enforced.</p>
+
+<form class="search" method="get" action="/keep">
+  <input type="search" name="q" value="%(query)s"
+         placeholder="find an entry &mdash; a word, a name, a year">
+  <button type="submit">look</button>
+</form>
+
+<h2>Every entry (%(n)d)</h2>
+<p class="hint">Striking rules a line through an entry: it leaves the ledger
+   and can be put back. Burning takes the page out altogether.</p>
+<ol class="ledger">%(entries)s</ol>
+
+<h2>The hands (%(people)d)</h2>
+<table class="hands">
+  <tr><th>pen name</th><th class="n">standing</th><th class="n">struck</th>
+      <th>since</th><th></th></tr>
+  %(rows)s
+</table>""" % {
+        "banner": banner,
+        "bets": counts["bets"],
+        "struck": counts["struck"],
+        "people": counts["people"],
+        "hands": "hand" if counts["people"] == 1 else "hands",
+        "votes": counts["votes"],
+        "marks": "mark" if counts["votes"] == 1 else "marks",
+        "query": e(query),
+        "n": len(bets),
+        "entries": entries and "".join(entries) or '<p class="hint">Nothing to show.</p>',
+        "rows": "".join(rows),
+    }
+    return layout("Keeping the ledger", body, user)
+
+
+def burn_page(user, csrf, bet):
+    """Asked twice, because there is no third time."""
+    body = """<div class="notice">
+  <p>Entry %(id)d would be taken out of the book altogether &mdash; the bet,
+     its reasoning and every mark on it. There is no getting it back.</p>
+</div>
+<div class="bet-sheet">
+  <p class="claim">%(claim)s</p>
+  <p class="colophon">%(cat)s &middot; to be judged by %(year)d &middot;
+     written by %(who)s on %(when)s</p>
+  %(because)s
+</div>
+<p class="lede">If it only needs to leave the ledger, strike it instead:
+   that can be undone.</p>
+<div class="deeds">
+  <form method="post" action="/keep" class="inline">%(csrf)s
+    <input type="hidden" name="deed" value="burn-for-good">
+    <input type="hidden" name="bet" value="%(id)d">
+    <input type="hidden" name="why" value="">
+    <button type="submit" class="danger">Yes, burn entry %(id)d</button></form>
+  <a class="button" href="/keep">Leave it alone</a>
+</div>""" % {
+        "id": bet["id"],
+        "claim": e(bet["claim"]),
+        "cat": e(bet["category"]),
+        "year": bet["horizon"],
+        "who": e(db.byline(bet)),
+        "when": date_of(bet["created_at"]),
+        "because": '<div class="because">%s</div>' % e(bet["reasoning"].strip())
+                   if bet["reasoning"].strip() else "",
+        "csrf": csrf_field(csrf),
+    }
+    return layout("Burn an entry", body, user)
+
+
+def house_page(user=None):
+    """What the place is for, and what it is not for."""
+    body = """<h2>The house rules</h2>
+
+<p class="lede">This is a book of wagers on what the world will look like with
+   artificial intelligence in it. It is open to anyone, and it asks one thing
+   in return: that what you write down is a bet, not a banner.</p>
+
+<h2>A bet is not a wish</h2>
+<p>Writing that something <i>will</i> happen is not arguing that it
+   <i>should</i>. The notebook takes no side on whether any future here is a
+   good one. People who expect very different things, and who want very
+   different things, are meant to be able to write in the same book without
+   it becoming an argument about who is on whose side.</p>
+<p>The useful question here is never &ldquo;is this the future I want?&rdquo;
+   It is &ldquo;would I put money on it?&rdquo; &mdash; and, in a few years,
+   &ldquo;was I right?&rdquo;</p>
+
+<h2>What makes a good entry</h2>
+<ul class="rules-list">
+  <li><b>Something that can be settled.</b> State it so that in ten years a
+      stranger could tell whether you were right, without having to ask what
+      you meant.</li>
+  <li><b>A year to judge it by.</b> A bet with no horizon is an opinion.</li>
+  <li><b>Your reasoning, and what would change your mind.</b> The reasoning is
+      often worth more than the claim.</li>
+  <li><b>Your own verdict, when the time comes.</b> The hand that wrote a bet
+      is the one that settles it &mdash; including when it turns out wrong.
+      Being wrong on the page is the point of keeping the book.</li>
+</ul>
+
+<h2>Marking one interesting</h2>
+<p>Anyone may mark a bet interesting, with no account and no name &mdash; it
+   is one click, and it says &ldquo;this one is worth watching&rdquo;, not
+   &ldquo;I agree with this&rdquo;. Writing a bet of your own needs a pen
+   name, because a bet has an author and someone has to settle it later.</p>
+
+<h2>What gets struck out</h2>
+<p>Very little, and reluctantly. The ledger is kept by hand, and a line is
+   ruled through an entry when it is:</p>
+<ul class="rules-list">
+  <li>not a bet at all &mdash; advertising, or a slogan with a year stapled
+      to it;</li>
+  <li>aimed at a private person, rather than at the world;</li>
+  <li>unsettleable on purpose, written so that no outcome could ever count
+      against it;</li>
+  <li>against the law, or an attempt to use the book to reach somebody who
+      does not want to be reached.</li>
+</ul>
+<p>A struck entry is ruled through rather than torn out, and it can be put
+   back: a judgement made by one person at one moment is exactly the sort of
+   thing that ought to be reversible. A bet is <b>not</b> struck for being
+   unpopular, uncomfortable, or probably wrong. Most of these bets will be
+   wrong. That is what a book of wagers looks like.</p>
+
+<h2>Your name and your address</h2>
+<p>You sign with a pen name, which you may change or hide at any time. Your
+   address is never shown to anyone, and is kept for one reason: to post you
+   a key when you sign in, and the yearly letter if you asked for one.</p>
+
+<div class="deeds">
+  <a class="button" href="/">Back to the ledger</a>
+  <a class="button" href="/propose">Propose a bet</a>
+</div>"""
+    return layout("The house rules", body, user)
+
+
 def print_page(bets, heading, subheading):
     entries = "".join(
         """<li class="entry"><div class="tally"><span class="count">%d</span>
@@ -474,7 +705,7 @@ def print_page(bets, heading, subheading):
 <p class="lede">%(sub)s</p>
 <p class="printed-note">Printed %(today)s from the Future with AI betting notebook.</p>
 <div class="deeds no-print">
-  <button onclick="window.print()">Print this sheet</button>
+  <button type="button" id="print-this">Print this sheet</button>
   <a class="button" href="/">Back to the ledger</a>
 </div>
 <ol class="ledger">%(entries)s</ol>""" % {
