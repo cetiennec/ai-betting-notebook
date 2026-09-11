@@ -54,6 +54,22 @@ MAX_REASONING = 4000
 MAX_VERDICT = 2000
 
 
+# Crawlers are welcome in the public hall and nowhere else: a desk, the
+# sign-in form and the printing room are either private or expensive, and
+# none of them is worth an index entry.
+ROBOTS = """User-agent: *
+Allow: /
+Disallow: /desk
+Disallow: /enter
+Disallow: /keep
+Disallow: /print
+Disallow: /export.txt
+Disallow: /leave
+
+Sitemap: %s/sitemap.xml
+""" % BASE_URL
+
+
 # A path we are willing to copy into a Location header: no spaces, no
 # control characters, nothing but the ordinary furniture of a URL.
 SAFE_PATH = re.compile(r"^[A-Za-z0-9._~!$&'()*+,;=:@/?%-]*$")
@@ -240,6 +256,9 @@ class Notebook(BaseHTTPRequestHandler):
         kind = {
             ".css": "text/css",
             ".js": "text/javascript",
+            ".svg": "image/svg+xml",
+            ".png": "image/png",
+            ".txt": "text/plain; charset=utf-8",
         }.get(os.path.splitext(path)[1], "application/octet-stream")
         with open(path, "rb") as fh:
             payload = fh.read()
@@ -289,6 +308,10 @@ class Notebook(BaseHTTPRequestHandler):
                 return self.reply(self.desk(conn, user))
             if path == "/house":
                 return self.reply(render.house_page(user))
+            if path == "/robots.txt":
+                return self.send_text(ROBOTS)
+            if path == "/sitemap.xml":
+                return self.page_sitemap(conn)
             if path == "/keep":
                 return self.page_keep(conn, user, args)
             if path == "/print":
@@ -444,6 +467,29 @@ class Notebook(BaseHTTPRequestHandler):
                 lines.append("    VERDICT: %s" % b["verdict"].strip())
             lines += ["    %s/bet/%d" % (BASE_URL, b["id"]), ""]
         return self.send_text("\n".join(lines), filename="betting-notebook.txt")
+
+    def page_sitemap(self, conn):
+        """Every page worth finding from outside: the ledger, the rules, and
+        each entry. A desk belongs to one person and is not in here; nor is
+        anything struck, which list_bets already leaves out."""
+        pages = [(BASE_URL + "/", "daily"), (BASE_URL + "/house", "monthly")]
+        pages += [
+            ("%s/bet/%d" % (BASE_URL, b["id"]), "weekly")
+            for b in db.list_bets(conn, sort="newest")
+        ]
+        entries = "".join(
+            "  <url><loc>%s</loc><changefreq>%s</changefreq></url>\n" % (render.e(loc), freq)
+            for loc, freq in pages
+        )
+        body = ('<?xml version="1.0" encoding="UTF-8"?>\n'
+                '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+                "%s</urlset>\n" % entries).encode("utf-8")
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "application/xml; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.guard_headers()
+        self.end_headers()
+        self.wfile.write(body)
 
     # --- the moderation desk ----------------------------------------------
 
@@ -731,6 +777,19 @@ def seed(force=False):
 
 
 def serve(port):
+    # In the prototype the sign-in key is shown on the page, because no
+    # letter really leaves the machine. In public that is not a shortcut,
+    # it is a door: anyone could ask for a key to an address they do not
+    # hold and read it off the screen. A notebook answering on https with
+    # nowhere to post a letter is therefore refused rather than served.
+    if SECURE_COOKIES and not mail.using_real_smtp():
+        sys.exit(
+            "Refusing to open: %s is public, and SMTP_HOST is not set, so the\n"
+            "sign-in key would be shown on the page to whoever asked for it.\n"
+            "Set SMTP_HOST (and SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM),\n"
+            "or point NOTEBOOK_URL at http:// if this really is a local run."
+            % BASE_URL
+        )
     db.init()
     host = os.environ.get("NOTEBOOK_HOST", "127.0.0.1")
     server = ThreadingHTTPServer((host, port), Notebook)

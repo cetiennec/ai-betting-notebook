@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="A ruled page with a mark against one line">
+  <title>The Future with AI betting notebook</title>
+  <!-- Cheap cream paper, ruled, with one line marked in rubric: the
+       notebook at the size of a browser tab. -->
+  <rect width="64" height="64" rx="6" fill="#fbf9f4"/>
+  <rect x="0.75" y="0.75" width="62.5" height="62.5" rx="5.5" fill="none" stroke="#d8cfba" stroke-width="1.5"/>
+  <g stroke="#2a2724" stroke-width="3" stroke-linecap="round" opacity="0.85">
+    <line x1="22" y1="20" x2="50" y2="20"/>
+    <line x1="22" y1="32" x2="50" y2="32"/>
+    <line x1="22" y1="44" x2="42" y2="44"/>
+  </g>
+  <line x1="14" y1="8" x2="14" y2="56" stroke="#d8cfba" stroke-width="2"/>
+  <path d="M17 30.5 l4 4.5 l7.5 -9" fill="none" stroke="#93301f" stroke-width="4"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

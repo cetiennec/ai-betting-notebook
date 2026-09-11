@@ -591,7 +591,11 @@ class TestTheRateLimiterCannotBeHandedToTheVisitor(NotebookTestCase):
 
 class TestSecureCookies(unittest.TestCase):
     def test_cookies_are_marked_secure_when_the_notebook_is_on_https(self):
-        notebook = Notebook(NOTEBOOK_URL="https://notebook.example.org")
+        # A public notebook will not open without somewhere to post a
+        # letter, so name a server; nothing in this test asks for a key.
+        notebook = Notebook(
+            NOTEBOOK_URL="https://notebook.example.org", SMTP_HOST="smtp.invalid"
+        )
         try:
             raw = notebook.raw("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
             planted = [l for l in raw.split("\r\n") if l.lower().startswith("set-cookie")]
@@ -603,7 +607,54 @@ class TestSecureCookies(unittest.TestCase):
             notebook.stop()
 
 
+class TestAPublicNotebookNeedsMail(unittest.TestCase):
+    def test_it_refuses_to_open_on_https_with_nowhere_to_post_a_letter(self):
+        """Otherwise the key is shown on the page - a door, not a shortcut."""
+        with self.assertRaises(RuntimeError) as caught:
+            Notebook(NOTEBOOK_URL="https://notebook.example.org").stop()
+        self.assertIn("SMTP_HOST", str(caught.exception))
+
+
 # --- the ledger on disk ---------------------------------------------------
+
+# --- being found, and being pasted somewhere ------------------------------
+
+class TestBroadcasting(NotebookTestCase):
+    def test_crawlers_are_told_where_to_go(self):
+        reply = self.notebook.visitor().get("/robots.txt")
+        self.assertEqual(reply.status, 200)
+        self.assertIn("Disallow: /desk", reply.body)
+        self.assertIn("/sitemap.xml", reply.body)
+
+    def test_the_sitemap_names_the_ledger_and_its_entries(self):
+        reply = self.notebook.visitor().get("/sitemap.xml")
+        self.assertEqual(reply.status, 200)
+        self.assertIn("<loc>%s/house</loc>" % self.notebook.base, reply.body)
+        self.assertIn("<loc>%s/bet/1</loc>" % self.notebook.base, reply.body)
+
+    def test_a_desk_is_not_in_the_sitemap(self):
+        self.assertNotIn("/desk", self.notebook.visitor().get("/sitemap.xml").body)
+
+    def test_a_pasted_link_says_what_the_place_is(self):
+        body = self.notebook.visitor().get("/").body
+        self.assertIn('<meta name="description"', body)
+        self.assertIn('property="og:title"', body)
+        self.assertIn('<meta name="twitter:card" content="summary">', body)
+
+    def test_a_pasted_bet_says_what_the_bet_is(self):
+        page = self.notebook.visitor().get("/bet/1")
+        og = re.search(r'<meta property="og:title" content="([^"]+)"', page.body).group(1)
+        title = re.search(r"<title>(.*?) &middot;", page.body, re.S).group(1)
+        self.assertIn(title[:40], og)  # the bet travels, not the notebook's name alone
+        self.assertIn("The Future with AI", og)
+        canonical = re.search(r'<link rel="canonical" href="([^"]+)"', page.body).group(1)
+        self.assertEqual(canonical, "%s/bet/1" % self.notebook.base)
+
+    def test_there_is_a_mark_for_the_tab(self):
+        reply = self.notebook.visitor().get("/static/notebook.svg")
+        self.assertEqual(reply.status, 200)
+        self.assertEqual(reply.headers["Content-Type"], "image/svg+xml")
+
 
 # --- the house rules ------------------------------------------------------
 

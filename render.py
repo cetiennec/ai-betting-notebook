@@ -1,9 +1,23 @@
 """Every page in the notebook, written out as plain HTML strings."""
 
+import os
 from html import escape
 from urllib.parse import urlencode
 
 import db
+
+# Where the notebook answers from, for the links a link preview reads.
+# The same variable app.py takes its BASE_URL from; read here rather than
+# imported, since app imports render and not the other way about.
+SITE_URL = os.environ.get("NOTEBOOK_URL", "http://localhost:8420").rstrip("/")
+SITE_NAME = "The Future with AI Betting Notebook"
+# What somebody sees when the address is pasted into a chat, above any
+# words of ours. A page with something better to say passes its own.
+DESCRIPTION = (
+    "A public ledger of bets on what the world will look like with artificial "
+    "intelligence in it. Write down what you expect, say which year should "
+    "judge it, and get a letter when it comes due."
+)
 
 TAGLINE = (
     "Take your bet on what you think the future with AI will look like,\n"
@@ -29,7 +43,30 @@ def date_of(value):
     return stamp.strftime("%d %B %Y") if stamp else ""
 
 
-def layout(title, body, user=None, wide_footer=True):
+def social_head(title, description, path="/"):
+    """The handful of tags that decide what a pasted link looks like."""
+    url = SITE_URL + path
+    # A preview shows the title alone, with no masthead under it, so the
+    # name of the place has to travel with the name of the page.
+    shown = "%s \u00b7 %s" % (title, SITE_NAME)
+    return """<meta name="description" content="%(desc)s">
+<link rel="canonical" href="%(url)s">
+<meta property="og:site_name" content="%(site)s">
+<meta property="og:type" content="website">
+<meta property="og:title" content="%(title)s">
+<meta property="og:description" content="%(desc)s">
+<meta property="og:url" content="%(url)s">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="%(title)s">
+<meta name="twitter:description" content="%(desc)s">""" % {
+        "title": e(shown),
+        "desc": e(description),
+        "url": e(url),
+        "site": e(SITE_NAME),
+    }
+
+
+def layout(title, body, user=None, wide_footer=True, description="", path="/"):
     if user:
         who = 'signed as <b>%s</b>' % e(user["pseudo"])
         room = (
@@ -50,8 +87,9 @@ def layout(title, body, user=None, wide_footer=True):
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>%(title)s &middot; The Future with AI Betting Notebook</title>
+%(social)s
 <link rel="stylesheet" href="/static/notebook.css">
-<link rel="icon" href="data:,">
+<link rel="icon" href="/static/notebook.svg" type="image/svg+xml">
 <script src="/static/notebook.js" defer></script>
 </head>
 <body>
@@ -76,6 +114,7 @@ def layout(title, body, user=None, wide_footer=True):
 </html>
 """ % {
         "title": e(title),
+        "social": social_head(title, description or DESCRIPTION, path),
         "tagline": TAGLINE,
         "room": room,
         "who": who,
@@ -224,7 +263,7 @@ def index(bets, counts, user, query, category, status, sort, csrf, note=""):
         if user
         else '<a class="button" href="/enter">Sign in to keep a copy</a>',
     }
-    return layout("The ledger", body, user)
+    return layout("The ledger", body, user, description=DESCRIPTION, path="/")
 
 
 def bet_page(bet, user, csrf, note=""):
@@ -303,7 +342,14 @@ def bet_page(bet, user, csrf, note=""):
         "verdict": verdict,
         "resolve": resolve,
     }
-    return layout(bet["claim"][:60], body, user)
+    # A bet pasted into a chat should read as the bet, not as the notebook:
+    # the claim is the title, the reasoning behind it the description.
+    because = " ".join(bet["reasoning"].split())
+    return layout(
+        bet["claim"][:60], body, user,
+        description=(because[:280] or DESCRIPTION),
+        path="/bet/%d" % bet["id"],
+    )
 
 
 # Put in front of anyone writing their first bet. The full rules are at

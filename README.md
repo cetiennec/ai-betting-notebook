@@ -96,6 +96,19 @@ socket and header layers are covered rather than mocked. They run on every
 push, and nothing reaches the live notebook that has not passed them —
 see `.github/workflows/`.
 
+## Being found, and being pasted somewhere
+
+Every page carries a description and Open Graph tags, so an address dropped
+into a chat shows what the place is; a single bet shows the claim and the
+reasoning behind it rather than the notebook's name. `/robots.txt` welcomes
+crawlers to the public hall and keeps them out of the desk, the sign-in form
+and the printing room; `/sitemap.xml` lists the ledger, the house rules and
+every entry that has not been struck. The mark in the browser tab lives at
+`static/notebook.svg`.
+
+Still missing here: an `og:image`, so a pasted link is words on a plain card
+rather than a picture.
+
 ## Sending mail for real
 
 The outbox is a stand-in. Point it at a real server with environment
@@ -119,6 +132,11 @@ rate limiting on the sign-in form (five keys per address, twenty per visitor,
 each per fifteen minutes — see `db.rate_limited`), length caps on everything
 that is written down, `Secure` cookies and a content security policy when it
 is served over https, and a body it refuses to read past 64KB.
+
+A notebook answering on an `https://` address **will not open without
+`SMTP_HOST`**: in the prototype the sign-in key is shown on the page, which in
+public is a door rather than a shortcut — anyone could ask for a key to an
+address they do not hold and read it off the screen.
 
 An anonymous vote is still a cookie, and clearing it votes again - the
 deliberate trade for letting people weigh in without an account. It is no
