@@ -13,6 +13,8 @@ Standard library only: no install, no network, nothing to configure.
 import argparse
 import os
 import posixpath
+import re
+import secrets
 import sys
 from http import HTTPStatus
 from http.cookies import SimpleCookie
@@ -26,11 +28,36 @@ import render
 ROOT = os.path.dirname(os.path.abspath(__file__))
 STATIC = os.path.join(ROOT, "static")
 COOKIE = "notebook_session"
+ANON_COOKIE = "notebook_anon"
+ANON_COOKIE_DAYS = 3650  # a voter without an account is remembered by this cookie alone
+CSRF_COOKIE = "notebook_csrf"
+CSRF_COOKIE_DAYS = 30
 BASE_URL = os.environ.get("NOTEBOOK_URL", "http://localhost:8420")
+
+# Over https the cookies must not be allowed onto a plain connection.
+SECURE_COOKIES = BASE_URL.startswith("https://")
+# Nobody needs to post more than a long bet; refuse the rest unread.
+MAX_BODY_BYTES = 64 * 1024
+MAX_CLAIM = 240
+MAX_REASONING = 4000
+MAX_VERDICT = 2000
+
+
+# A path we are willing to copy into a Location header: no spaces, no
+# control characters, nothing but the ordinary furniture of a URL.
+SAFE_PATH = re.compile(r"^[A-Za-z0-9._~!$&'()*+,;=:@/?%-]*$")
+
+
+def set_cookie(name, value, max_age):
+    bits = ["%s=%s" % (name, value), "Path=/", "HttpOnly", "SameSite=Lax", "Max-Age=%d" % max_age]
+    if SECURE_COOKIES:
+        bits.append("Secure")
+    return "; ".join(bits)
 
 
 class Notebook(BaseHTTPRequestHandler):
     server_version = "Notebook/1.0"
+    sys_version = ""  # no need to announce the Python version to the world
     protocol_version = "HTTP/1.1"
 
     # --- plumbing ---------------------------------------------------------
@@ -38,19 +65,35 @@ class Notebook(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         sys.stderr.write("  %s  %s\n" % (self.log_date_time_string(), fmt % args))
 
-    def reply(self, html, code=200, cookie=None, kill_cookie=False):
+    def guard_headers(self):
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "same-origin")
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'none'; style-src 'self'; img-src 'self' data:; "
+            "form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+        )
+        if SECURE_COOKIES:
+            self.send_header("Strict-Transport-Security", "max-age=31536000")
+
+    def cookie_headers(self, cookie=None, kill_cookie=False, anon_cookie=None):
+        if cookie:
+            self.send_header("Set-Cookie", set_cookie(COOKIE, cookie, db.SESSION_DAYS * 86400))
+        if kill_cookie:
+            self.send_header("Set-Cookie", set_cookie(COOKIE, "", 0))
+        if anon_cookie:
+            self.send_header(
+                "Set-Cookie", set_cookie(ANON_COOKIE, anon_cookie, ANON_COOKIE_DAYS * 86400)
+            )
+        self._maybe_plant_csrf()
+
+    def reply(self, html, code=200, cookie=None, kill_cookie=False, anon_cookie=None):
         payload = html.encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(payload)))
-        if cookie:
-            self.send_header(
-                "Set-Cookie",
-                "%s=%s; Path=/; HttpOnly; SameSite=Lax; Max-Age=%d"
-                % (COOKIE, cookie, db.SESSION_DAYS * 86400),
-            )
-        if kill_cookie:
-            self.send_header("Set-Cookie", "%s=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0" % COOKIE)
+        self.guard_headers()
+        self.cookie_headers(cookie, kill_cookie, anon_cookie)
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(payload)
@@ -62,35 +105,94 @@ class Notebook(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(payload)))
         if filename:
             self.send_header("Content-Disposition", 'attachment; filename="%s"' % filename)
+        self.guard_headers()
         self.end_headers()
         self.wfile.write(payload)
 
-    def go(self, where, cookie=None, kill_cookie=False):
+    def go(self, where, cookie=None, kill_cookie=False, anon_cookie=None):
+        # Never let a caller write raw request data into a response header.
+        if not where.startswith("/") or any(c in where for c in "\r\n"):
+            where = "/"
         self.send_response(HTTPStatus.SEE_OTHER)
         self.send_header("Location", where)
         self.send_header("Content-Length", "0")
-        if cookie:
-            self.send_header(
-                "Set-Cookie",
-                "%s=%s; Path=/; HttpOnly; SameSite=Lax; Max-Age=%d"
-                % (COOKIE, cookie, db.SESSION_DAYS * 86400),
-            )
-        if kill_cookie:
-            self.send_header("Set-Cookie", "%s=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0" % COOKIE)
+        self.guard_headers()
+        self.cookie_headers(cookie, kill_cookie, anon_cookie)
         self.end_headers()
 
+    def back_to(self, fallback):
+        """Where a form should send the visitor next: the page they came
+        from, but only ever as a path of our own, never the raw header."""
+        referer = self.headers.get("Referer") or ""
+        seen = urlparse(referer)
+        if not referer or seen.netloc != urlparse(BASE_URL).netloc:
+            return fallback
+        where = seen.path or "/"
+        if seen.query:
+            where += "?" + seen.query
+        # urlparse drops CR/LF/TAB, so a header cannot be split here - but
+        # whatever is left of a crafted Referer has no business in a reply
+        # header either, so only a plain path is allowed through.
+        if not where.startswith("/") or not SAFE_PATH.match(where):
+            return fallback
+        return where
+
     def form(self):
-        length = int(self.headers.get("Content-Length") or 0)
-        raw = self.rfile.read(length).decode("utf-8") if length else ""
+        """The posted fields, or None if the body is missing, malformed or
+        larger than anything this notebook has a use for."""
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            return None
+        if length < 0 or length > MAX_BODY_BYTES:
+            return None
+        raw = self.rfile.read(length).decode("utf-8", "replace") if length else ""
         return {k: v[0] for k, v in parse_qs(raw, keep_blank_values=True).items()}
 
-    def session_token(self):
+    def cookie(self, name):
         raw = self.headers.get("Cookie")
         if not raw:
             return None
         jar = SimpleCookie()
         jar.load(raw)
-        return jar[COOKIE].value if COOKIE in jar else None
+        return jar[name].value if name in jar else None
+
+    def session_token(self):
+        return self.cookie(COOKIE)
+
+    def anon_id(self):
+        """The visitor's anon-voter cookie, or "" if they don't have one yet."""
+        return self.cookie(ANON_COOKIE) or ""
+
+    def client_ip(self):
+        """The real visitor address, trusting X-Forwarded-For behind Fly's proxy."""
+        forwarded = self.headers.get("X-Forwarded-For")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+        return self.client_address[0]
+
+    def csrf_token(self):
+        """A per-visitor token, minted once and replanted by every reply.
+
+        Every form in the notebook carries it as a hidden field; every
+        state-changing POST checks the field against this same cookie
+        (a plain double-submit check - see check_csrf).
+        """
+        if not hasattr(self, "_csrf"):
+            token = self.cookie(CSRF_COOKIE)
+            self._csrf, self._csrf_is_new = (token or secrets.token_urlsafe(24)), not token
+        return self._csrf
+
+    def _maybe_plant_csrf(self):
+        if getattr(self, "_csrf_is_new", False):
+            self.send_header(
+                "Set-Cookie", set_cookie(CSRF_COOKIE, self._csrf, CSRF_COOKIE_DAYS * 86400)
+            )
+
+    def check_csrf(self, form):
+        return bool(self.csrf_token()) and secrets.compare_digest(
+            form.get("csrf", ""), self.csrf_token()
+        )
 
     def serve_static(self, name):
         safe = posixpath.normpath("/" + name).lstrip("/")
@@ -128,9 +230,9 @@ class Notebook(BaseHTTPRequestHandler):
             if path == "/propose":
                 if not user:
                     return self.go("/enter")
-                return self.reply(render.propose_page(user))
+                return self.reply(render.propose_page(user, self.csrf_token()))
             if path == "/enter":
-                return self.reply(render.enter_page())
+                return self.reply(render.enter_page(self.csrf_token()))
             if path.startswith("/enter/"):
                 return self.claim_key(conn, path.split("/", 2)[2])
             if path == "/leave":
@@ -162,6 +264,22 @@ class Notebook(BaseHTTPRequestHandler):
             user = db.session_user(conn, self.session_token())
             form = self.form()
 
+            if form is None:
+                return self.reply(
+                    render.message_page("Too much at once", "That did not arrive in one piece."),
+                    413,
+                )
+
+            if not self.check_csrf(form):
+                return self.reply(
+                    render.message_page(
+                        "That page had gone stale",
+                        "Go back, reload the page, and try again.",
+                        user,
+                    ),
+                    400,
+                )
+
             if path == "/enter":
                 return self.post_enter(conn, form)
             if path == "/propose":
@@ -184,7 +302,9 @@ class Notebook(BaseHTTPRequestHandler):
         category = args.get("category", "")
         status = args.get("status", "")
         sort = args.get("sort", "interesting")
-        bets = db.list_bets(conn, user["id"] if user else 0, query, category, status, sort)
+        bets = db.list_bets(
+            conn, user["id"] if user else 0, query, category, status, sort, self.anon_id()
+        )
         note = ""
         if args.get("welcome"):
             note = (
@@ -193,24 +313,28 @@ class Notebook(BaseHTTPRequestHandler):
                 "</div>" % render.e(user["pseudo"] if user else "")
             )
         return self.reply(
-            render.index(bets, db.category_counts(conn), user, query, category, status, sort, note)
+            render.index(
+                bets, db.category_counts(conn), user, query, category, status, sort,
+                self.csrf_token(), note,
+            )
         )
 
     def page_bet(self, conn, user, raw_id):
         if not raw_id.isdigit():
             return self.reply(render.message_page("A blank page", "No such entry."), 404)
-        bet = db.get_bet(conn, int(raw_id), user["id"] if user else 0)
+        bet = db.get_bet(conn, int(raw_id), user["id"] if user else 0, self.anon_id())
         if bet is None:
             return self.reply(
                 render.message_page("A torn page", "That entry is not in the ledger."), 404
             )
-        return self.reply(render.bet_page(bet, user))
+        return self.reply(render.bet_page(bet, user, self.csrf_token()))
 
     def selection(self, conn, user, args):
         """The set of bets a print or export request is asking for."""
         viewer = user["id"] if user else 0
+        anon = self.anon_id()
         if args.get("bet", "").isdigit():
-            bet = db.get_bet(conn, int(args["bet"]), viewer)
+            bet = db.get_bet(conn, int(args["bet"]), viewer, anon)
             rows = [bet] if bet else []
             return rows, "One bet", "Entry %s of the ledger." % args["bet"]
         if args.get("mine") and user:
@@ -224,7 +348,7 @@ class Notebook(BaseHTTPRequestHandler):
 
         query, category = args.get("q", ""), args.get("category", "")
         status, sort = args.get("status", ""), args.get("sort", "interesting")
-        rows = db.list_bets(conn, viewer, query, category, status, sort)
+        rows = db.list_bets(conn, viewer, query, category, status, sort, anon)
         heading = "The ledger" if not category else "The ledger: %s" % category
         bits = []
         if query:
@@ -272,24 +396,53 @@ class Notebook(BaseHTTPRequestHandler):
         mine = db.list_bets(conn, user["id"], sort="newest")
         backed = [b for b in mine if b["voted"] and b["user_id"] != user["id"]]
         own = [b for b in mine if b["user_id"] == user["id"]]
-        return render.desk_page(user, own, backed, note, error)
+        return render.desk_page(user, self.csrf_token(), own, backed, note, error)
 
     # --- actions ----------------------------------------------------------
 
     def post_enter(self, conn, form):
         email = form.get("email", "").strip().lower()
         if not mail.looks_like_email(email):
-            return self.reply(render.enter_page(error="That does not look like an address."), 400)
+            return self.reply(
+                render.enter_page(self.csrf_token(), error="That does not look like an address."), 400
+            )
+        overbusy = (
+            db.rate_limited(conn, "enter-ip:%s" % self.client_ip(), 20, 15)
+            or db.rate_limited(conn, "enter-email:%s" % email, 5, 15)
+        )
+        if overbusy:
+            return self.reply(
+                render.enter_page(
+                    self.csrf_token(),
+                    error="Too many keys asked for. Wait a few minutes and try again.",
+                ),
+                429,
+            )
         token = db.new_login_token(conn, email)
         url = "%s/enter/%s" % (BASE_URL, quote(token))
-        mail.send_login_link(email, url)
-        return self.reply(render.enter_page(sent_to=email, link=url))
+        sent = mail.send_login_link(email, url)
+        if mail.using_real_smtp() and not sent:
+            return self.reply(
+                render.enter_page(
+                    self.csrf_token(),
+                    error="The key could not be posted just now. Please try again shortly.",
+                ),
+                503,
+            )
+        # The link is only ever shown on the page when nothing was really
+        # emailed - once real mail is configured, proving you hold the
+        # inbox is the whole point, so the key must go there and nowhere else.
+        shortcut = None if mail.using_real_smtp() else url
+        return self.reply(render.enter_page(self.csrf_token(), sent_to=email, link=shortcut))
 
     def claim_key(self, conn, token):
         email = db.spend_login_token(conn, token)
         if not email:
             return self.reply(
-                render.enter_page(error="That key is spent, or too old. Ask for another."), 400
+                render.enter_page(
+                    self.csrf_token(), error="That key is spent, or too old. Ask for another."
+                ),
+                400,
             )
         user = db.user_by_email(conn, email) or db.create_user(conn, email)
         return self.go("/?welcome=1", cookie=db.new_session(conn, user["id"]))
@@ -310,32 +463,46 @@ class Notebook(BaseHTTPRequestHandler):
 
         if len(claim) < 12:
             return self.reply(
-                render.propose_page(user, values, "A bet needs to be a whole claim."), 400
+                render.propose_page(user, self.csrf_token(), values, "A bet needs to be a whole claim."),
+                400,
+            )
+        if len(claim) > MAX_CLAIM:
+            return self.reply(
+                render.propose_page(
+                    user, self.csrf_token(), values,
+                    "A claim wants %d characters at most." % MAX_CLAIM,
+                ),
+                400,
             )
         if category not in db.CATEGORIES:
-            return self.reply(render.propose_page(user, values, "Pick a subject."), 400)
+            return self.reply(
+                render.propose_page(user, self.csrf_token(), values, "Pick a subject."), 400
+            )
         if not horizon.isdigit() or not year <= int(horizon) <= year + 75:
             return self.reply(
                 render.propose_page(
-                    user, values, "The horizon must be a year between %d and %d." % (year, year + 75)
+                    user, self.csrf_token(), values,
+                    "The horizon must be a year between %d and %d." % (year, year + 75),
                 ),
                 400,
             )
         bet_id = db.create_bet(
-            conn, user["id"], claim, reasoning[:4000], category, int(horizon), anonymous
+            conn, user["id"], claim, reasoning[:MAX_REASONING], category, int(horizon), anonymous
         )
         db.toggle_vote(conn, bet_id, user["id"])  # you back your own bet
         return self.go("/bet/%d" % bet_id)
 
     def post_vote(self, conn, user, raw_id):
-        if not user:
-            return self.go("/enter")
         if not raw_id.isdigit() or db.get_bet(conn, int(raw_id)) is None:
             return self.reply(render.message_page("A torn page", "No such entry."), 404)
-        db.toggle_vote(conn, int(raw_id), user["id"])
-        back = self.headers.get("Referer")
-        return self.go(back if back and urlparse(back).netloc == urlparse(BASE_URL).netloc
-                       else "/bet/%s" % raw_id)
+        anon_cookie = None
+        if user:
+            db.toggle_vote(conn, int(raw_id), user_id=user["id"])
+        else:
+            anon = self.anon_id() or secrets.token_urlsafe(16)
+            db.toggle_vote(conn, int(raw_id), anon_id=anon)
+            anon_cookie = anon  # (re)plant the cookie so this vote is remembered
+        return self.go(self.back_to("/bet/%s" % raw_id), anon_cookie=anon_cookie)
 
     def post_resolve(self, conn, user, raw_id, form):
         if not user or not raw_id.isdigit():
@@ -349,7 +516,9 @@ class Notebook(BaseHTTPRequestHandler):
         status = form.get("status", "open")
         if status not in db.STATUSES:
             status = "open"
-        db.resolve_bet(conn, int(raw_id), user["id"], status, form.get("verdict", "").strip()[:2000])
+        db.resolve_bet(
+            conn, int(raw_id), user["id"], status, form.get("verdict", "").strip()[:MAX_VERDICT]
+        )
         return self.go("/bet/%s" % raw_id)
 
     def post_desk(self, conn, user, form):
@@ -418,7 +587,8 @@ def seed(force=False):
 
 def serve(port):
     db.init()
-    server = ThreadingHTTPServer(("127.0.0.1", port), Notebook)
+    host = os.environ.get("NOTEBOOK_HOST", "127.0.0.1")
+    server = ThreadingHTTPServer((host, port), Notebook)
     url = BASE_URL if str(port) in BASE_URL else "http://localhost:%d" % port
     print("\n  The Future with AI betting notebook")
     print("  open  %s" % url)

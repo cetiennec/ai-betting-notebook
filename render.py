@@ -15,6 +15,10 @@ def e(value):
     return escape("" if value is None else str(value), quote=True)
 
 
+def csrf_field(csrf):
+    return '<input type="hidden" name="csrf" value="%s">' % e(csrf)
+
+
 def qs(**parts):
     clean = {k: v for k, v in parts.items() if v not in (None, "", 0)}
     return ("?" + urlencode(clean)) if clean else ""
@@ -78,23 +82,18 @@ def layout(title, body, user=None, wide_footer=True):
 
 # --- pieces ---------------------------------------------------------------
 
-def vote_control(bet, user):
+def vote_control(bet, user, csrf):
     n = bet["votes"]
     word = "vote" if n == 1 else "votes"
-    if not user:
-        return (
-            '<div class="tally"><span class="count">%d</span>'
-            '<span class="word">%s</span></div>' % (n, word)
-        )
     cast = " cast" if bet["voted"] else ""
     mark = "&minus;" if bet["voted"] else "+"
     return (
         '<div class="tally">'
-        '<form method="post" action="/bet/%d/vote" class="inline">'
+        '<form method="post" action="/bet/%d/vote" class="inline">%s'
         '<span class="count">%d</span>'
         '<button class="vote%s" name="back" value="1" title="mark this one interesting">%s</button>'
         '<span class="word">%s</span>'
-        "</form></div>" % (bet["id"], n, cast, mark, word)
+        "</form></div>" % (bet["id"], csrf_field(csrf), n, cast, mark, word)
     )
 
 
@@ -105,7 +104,7 @@ def status_stamp(bet):
     return ' <span class="stamp%s">%s</span>' % (quiet, e(db.STATUSES[bet["status"]]))
 
 
-def entry(bet, user, with_reasoning=True):
+def entry(bet, user, csrf, with_reasoning=True):
     because = ""
     if with_reasoning and bet["reasoning"].strip():
         because = '<p class="because">%s</p>' % e(bet["reasoning"].strip())
@@ -118,7 +117,7 @@ def entry(bet, user, with_reasoning=True):
     %(because)s
   </div>
 </li>""" % {
-        "vote": vote_control(bet, user),
+        "vote": vote_control(bet, user, csrf),
         "id": bet["id"],
         "claim": e(bet["claim"]),
         "stamp": status_stamp(bet),
@@ -183,9 +182,9 @@ def search_form(query, counts, category, status, sort):
 
 # --- pages ----------------------------------------------------------------
 
-def index(bets, counts, user, query, category, status, sort, note=""):
+def index(bets, counts, user, query, category, status, sort, csrf, note=""):
     if bets:
-        ledger = '<ol class="ledger">%s</ol>' % "".join(entry(b, user) for b in bets)
+        ledger = '<ol class="ledger">%s</ol>' % "".join(entry(b, user, csrf) for b in bets)
     elif query or category or status:
         ledger = '<p class="lede">Nothing in the ledger matches. Try a wider net, or <a href="/propose">write the bet yourself</a>.</p>'
     else:
@@ -224,7 +223,7 @@ def index(bets, counts, user, query, category, status, sort, note=""):
     return layout("The ledger", body, user)
 
 
-def bet_page(bet, user, note=""):
+def bet_page(bet, user, csrf, note=""):
     mine = user and user["id"] == bet["user_id"]
     resolve = ""
     if mine:
@@ -236,12 +235,13 @@ def bet_page(bet, user, note=""):
         resolve = """<h2>Settle it</h2>
 <p class="hint">Yours to call, whenever the world has made up its mind.</p>
 <form method="post" action="/bet/%d/resolve">
+  %s
   <label class="field"><span class="name">How it turned out</span>
     <select name="status">%s</select></label>
   <label class="field"><span class="name">A line on why</span>
     <textarea name="verdict" placeholder="What actually happened, and how you judged it.">%s</textarea></label>
   <div class="deeds"><button type="submit">Record the verdict</button></div>
-</form>""" % (bet["id"], options, e(bet["verdict"]))
+</form>""" % (bet["id"], csrf_field(csrf), options, e(bet["verdict"]))
 
     verdict = ""
     if bet["status"] != "open":
@@ -289,12 +289,10 @@ def bet_page(bet, user, note=""):
         "word": "person" if bet["votes"] == 1 else "people",
         "id": bet["id"],
         "votebtn": (
-            '<form method="post" action="/bet/%d/vote" class="inline">'
+            '<form method="post" action="/bet/%d/vote" class="inline">%s'
             '<button type="submit" name="back" value="1">%s</button></form>'
-            % (bet["id"], "Take back my vote" if bet["voted"] else "Mark it interesting")
-        )
-        if user
-        else '<a class="button" href="/enter">Sign in to vote</a>',
+            % (bet["id"], csrf_field(csrf), "Take back my vote" if bet["voted"] else "Mark it interesting")
+        ),
         "print": '<a class="button" href="/print?bet=%d">Print this bet</a>' % bet["id"]
         if user
         else "",
@@ -304,7 +302,7 @@ def bet_page(bet, user, note=""):
     return layout(bet["claim"][:60], body, user)
 
 
-def propose_page(user, values=None, error=""):
+def propose_page(user, csrf, values=None, error=""):
     values = values or {}
     year = db.now().year
     options = "".join(
@@ -316,6 +314,7 @@ def propose_page(user, values=None, error=""):
 <h2>Propose a bet</h2>
 <p class="lede">State it so that in ten years a stranger could tell whether you were right.</p>
 <form method="post" action="/propose">
+  %(csrf)s
   <label class="field"><span class="name">The claim</span>
     <input type="text" name="claim" maxlength="240" required
            placeholder="By 2032, most people will assume a photograph is fake until proven otherwise."
@@ -332,6 +331,7 @@ def propose_page(user, values=None, error=""):
   <div class="deeds"><button type="submit">Write it into the ledger</button></div>
 </form>""" % {
         "note": note,
+        "csrf": csrf_field(csrf),
         "claim": e(values.get("claim", "")),
         "reasoning": e(values.get("reasoning", "")),
         "options": options,
@@ -343,7 +343,7 @@ def propose_page(user, values=None, error=""):
     return layout("Propose a bet", body, user)
 
 
-def enter_page(error="", sent_to="", link=""):
+def enter_page(csrf, error="", sent_to="", link=""):
     if sent_to:
         shortcut = (
             '<p class="hint">This prototype posts nothing to the internet. Your key was'
@@ -364,14 +364,15 @@ def enter_page(error="", sent_to="", link=""):
 <p class="lede">No passwords are kept here. Leave an address; we post you a key.
    You will be given a pen name, which you may change, hide or keep.</p>
 <form method="post" action="/enter">
+  %s
   <label class="field"><span class="name">Your address</span>
     <input type="email" name="email" required placeholder="you@example.org"></label>
   <div class="deeds"><button type="submit">Post me a key</button></div>
-</form>""" % note
+</form>""" % (note, csrf_field(csrf))
     return layout("Sign in", body)
 
 
-def desk_page(user, mine, backed, note="", error=""):
+def desk_page(user, csrf, mine, backed, note="", error=""):
     banner = ""
     if note:
         banner = '<div class="notice plain">%s</div>' % e(note)
@@ -401,6 +402,7 @@ def desk_page(user, mine, backed, note="", error=""):
     body = """%(banner)s
 <h2>Your desk</h2>
 <form method="post" action="/desk">
+  %(csrf)s
   <label class="field"><span class="name">Pen name</span>
     <input type="text" name="pseudo" maxlength="32" required value="%(pseudo)s"></label>
   <label class="tick"><input type="checkbox" name="show_pseudo" value="1"%(show)s>
@@ -435,6 +437,7 @@ def desk_page(user, mine, backed, note="", error=""):
    drops away and only the bets are on the page. Any search or subject you are looking
    at on the ledger can be printed the same way, from the foot of the ledger itself.</p>""" % {
         "banner": banner,
+        "csrf": csrf_field(csrf),
         "pseudo": e(user["pseudo"]),
         "show": " checked" if user["show_pseudo"] else "",
         "yearly": " checked" if user["yearly_letter"] else "",

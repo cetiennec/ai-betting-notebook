@@ -33,7 +33,7 @@ python3 app.py send-letters --force --email you@example.org   # see one now
 | | |
 |---|---|
 | **Propose** | a claim, the reasoning behind it, a subject, and the year by which it should be judged |
-| **Vote** | one "interesting" mark per person per bet, toggleable; the ledger sorts by it |
+| **Vote** | one "interesting" mark per bet, toggleable; the ledger sorts by it. No account needed — a signed-in vote is tied to your user, an anonymous one to a browser cookie, and neither is strongly deduplicated beyond that |
 | **Subjects** | twelve categories — education, politics & governance, work & economy, information & trust, science & technology, health & medicine, art & culture, everyday life, war & security, climate & environment, law & rights, love & friendship |
 | **Search** | one box for words, a box beside it for the subject; both combine with standing and order |
 | **Sign in** | email only. A one-shot key, valid an hour. You are given a pen name you can change |
@@ -55,9 +55,24 @@ app.py                 the server, the routes, the CLI, the example ledger
 db.py                  schema and every query
 render.py              every page, as plain HTML strings
 mail.py                letters: the login key and the once-a-year letter
+test_notebook.py       the tests
 static/notebook.css    the whole look — paper, ink, and the print rules
 data/                  SQLite file + outbox   (git-ignored, safe to delete)
+Dockerfile, fly.toml   how it is deployed
 ```
+
+## Tests
+
+```sh
+python3 test_notebook.py        # all of them
+python3 test_notebook.py -v     # and what each one is for
+```
+
+Standard library only, like the rest: each test starts a real notebook on a
+free port with its own throwaway ledger and talks to it over HTTP, so the
+socket and header layers are covered rather than mocked. They run on every
+push, and nothing reaches the live notebook that has not passed them —
+see `.github/workflows/`.
 
 ## Sending mail for real
 
@@ -77,6 +92,13 @@ it only writes to people whose twelve months are up.
 ## Before this is more than a prototype
 
 It listens on `127.0.0.1` only, and is built for one machine and a handful of
-people. Public deployment would want, at least: a real WSGI server behind TLS,
-CSRF tokens on the forms (today it leans on `SameSite=Lax` cookies), rate
-limiting on the sign-in form, and a moderation path for bets.
+people. It now carries CSRF tokens on every form (a double-submit cookie),
+rate limiting on the sign-in form (five keys per address, twenty per visitor,
+each per fifteen minutes — see `db.rate_limited`), length caps on everything
+that is written down, `Secure` cookies and a content security policy when it
+is served over https, and a body it refuses to read past 64KB.
+
+Still wanting, before it is more than a prototype: a real WSGI server rather
+than `ThreadingHTTPServer`, a moderation path for bets, and something better
+than a cookie behind an anonymous vote (today, clearing cookies votes again —
+a deliberate trade for letting people weigh in without an account).

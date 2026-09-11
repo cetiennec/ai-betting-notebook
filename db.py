@@ -77,14 +77,29 @@ CREATE TABLE IF NOT EXISTS bets (
 );
 
 CREATE TABLE IF NOT EXISTS votes (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
     bet_id     INTEGER NOT NULL REFERENCES bets(id) ON DELETE CASCADE,
-    user_id    INTEGER NOT NULL REFERENCES users(id),
+    user_id    INTEGER REFERENCES users(id),
+    anon_id    TEXT,
     created_at TEXT NOT NULL,
-    PRIMARY KEY (bet_id, user_id)
+    CHECK ((user_id IS NULL) <> (anon_id IS NULL))
+);
+
+CREATE TABLE IF NOT EXISTS rate_limits (
+    bucket     TEXT NOT NULL,
+    created_at TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_bets_category ON bets(category);
+CREATE INDEX IF NOT EXISTS idx_rate_limits_bucket ON rate_limits(bucket);
+"""
+
+# Split out from SCHEMA: these name columns (anon_id) that only exist on
+# votes once _migrate() has run, so they must be created after migration.
+VOTE_INDEXES = """
 CREATE INDEX IF NOT EXISTS idx_votes_bet ON votes(bet_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_votes_user ON votes(bet_id, user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_votes_anon ON votes(bet_id, anon_id);
 """
 
 
@@ -113,10 +128,27 @@ def connect():
     return conn
 
 
+def _migrate(conn):
+    """One-off shims for databases created before a schema change."""
+    cols = [row[1] for row in conn.execute("PRAGMA table_info(votes)").fetchall()]
+    if cols and "anon_id" not in cols:
+        with conn:
+            conn.execute("ALTER TABLE votes RENAME TO votes_old")
+            conn.executescript(SCHEMA)
+            conn.execute(
+                """INSERT INTO votes (bet_id, user_id, anon_id, created_at)
+                   SELECT bet_id, user_id, NULL, created_at FROM votes_old"""
+            )
+            conn.execute("DROP TABLE votes_old")
+
+
 def init():
     conn = connect()
     with conn:
         conn.executescript(SCHEMA)
+    _migrate(conn)
+    with conn:
+        conn.executescript(VOTE_INDEXES)
     return conn
 
 
@@ -167,6 +199,23 @@ def pseudo_taken(conn, pseudo, user_id):
 
 
 # --- entering the room ----------------------------------------------------
+
+def rate_limited(conn, bucket, limit, window_minutes):
+    """True (and does not count this attempt) once `bucket` has hit `limit`
+    attempts within the last `window_minutes`; otherwise records this one
+    and returns False. `bucket` is any string the caller wants to throttle
+    on its own - typically "ip:1.2.3.4" or "email:x@y.com"."""
+    cutoff = stamp(now() - timedelta(minutes=window_minutes))
+    with conn:
+        conn.execute("DELETE FROM rate_limits WHERE bucket = ? AND created_at < ?", (bucket, cutoff))
+        count = conn.execute(
+            "SELECT COUNT(*) FROM rate_limits WHERE bucket = ?", (bucket,)
+        ).fetchone()[0]
+        if count >= limit:
+            return True
+        conn.execute("INSERT INTO rate_limits (bucket, created_at) VALUES (?, ?)", (bucket, stamp()))
+    return False
+
 
 def new_login_token(conn, email):
     token = secrets.token_urlsafe(24)
@@ -230,7 +279,8 @@ SELECT b.*,
        u.pseudo AS author_pseudo,
        u.show_pseudo AS author_show_pseudo,
        (SELECT COUNT(*) FROM votes v WHERE v.bet_id = b.id) AS votes,
-       (SELECT COUNT(*) FROM votes v WHERE v.bet_id = b.id AND v.user_id = ?) AS voted
+       (SELECT COUNT(*) FROM votes v WHERE v.bet_id = b.id
+          AND (v.user_id = ? OR v.anon_id = ?)) AS voted
 FROM bets b JOIN users u ON u.id = b.user_id
 """
 
@@ -242,9 +292,9 @@ SORTS = {
 }
 
 
-def list_bets(conn, viewer_id=0, query="", category="", status="", sort="interesting"):
+def list_bets(conn, viewer_id=0, query="", category="", status="", sort="interesting", viewer_anon=""):
     sql = BET_SELECT
-    where, args = [], [viewer_id or 0]
+    where, args = [], [viewer_id or 0, viewer_anon or ""]
     if query:
         where.append("(b.claim LIKE ? OR b.reasoning LIKE ? OR b.category LIKE ?)")
         like = "%%%s%%" % query
@@ -261,8 +311,10 @@ def list_bets(conn, viewer_id=0, query="", category="", status="", sort="interes
     return conn.execute(sql, args).fetchall()
 
 
-def get_bet(conn, bet_id, viewer_id=0):
-    return conn.execute(BET_SELECT + " WHERE b.id = ?", (viewer_id or 0, bet_id)).fetchone()
+def get_bet(conn, bet_id, viewer_id=0, viewer_anon=""):
+    return conn.execute(
+        BET_SELECT + " WHERE b.id = ?", (viewer_id or 0, viewer_anon or "", bet_id)
+    ).fetchone()
 
 
 def create_bet(conn, user_id, claim, reasoning, category, horizon, anonymous):
@@ -284,17 +336,26 @@ def resolve_bet(conn, bet_id, user_id, status, verdict):
         )
 
 
-def toggle_vote(conn, bet_id, user_id):
+def toggle_vote(conn, bet_id, user_id=None, anon_id=None):
+    """Exactly one of user_id / anon_id identifies the voter.
+
+    Anonymous votes are not deduplicated beyond the cookie: anyone who
+    clears cookies or opens another browser can vote again. That is a
+    deliberate trade for letting people without an account weigh in at
+    all - see README.
+    """
+    assert (user_id is None) != (anon_id is None)
+    column, value = ("user_id", user_id) if user_id is not None else ("anon_id", anon_id)
     row = conn.execute(
-        "SELECT 1 FROM votes WHERE bet_id = ? AND user_id = ?", (bet_id, user_id)
+        "SELECT 1 FROM votes WHERE bet_id = ? AND %s = ?" % column, (bet_id, value)
     ).fetchone()
     with conn:
         if row:
-            conn.execute("DELETE FROM votes WHERE bet_id = ? AND user_id = ?", (bet_id, user_id))
+            conn.execute("DELETE FROM votes WHERE bet_id = ? AND %s = ?" % column, (bet_id, value))
         else:
             conn.execute(
-                "INSERT INTO votes (bet_id, user_id, created_at) VALUES (?, ?, ?)",
-                (bet_id, user_id, stamp()),
+                "INSERT INTO votes (bet_id, %s, created_at) VALUES (?, ?, ?)" % column,
+                (bet_id, value, stamp()),
             )
     return not row
 

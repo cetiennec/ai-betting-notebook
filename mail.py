@@ -9,6 +9,7 @@ real instead.
 import os
 import re
 import smtplib
+import sys
 from email.message import EmailMessage
 from datetime import timedelta
 
@@ -22,7 +23,17 @@ def looks_like_email(value):
     return bool(re.match(r"^[^@\s]+@[^@\s.]+\.[^@\s]+$", (value or "").strip()))
 
 
+def using_real_smtp():
+    return bool(os.environ.get("SMTP_HOST"))
+
+
 def send(to, subject, body):
+    """Write the letter to the outbox, then try to post it for real.
+
+    Returns True if a real send succeeded (or none was configured - the
+    outbox stands in for it), False if SMTP was configured but failed.
+    Callers must not crash a request over a mail provider being down.
+    """
     os.makedirs(OUTBOX, exist_ok=True)
     slug = re.sub(r"[^a-z0-9]+", "-", ("%s-%s" % (to, subject)).lower())[:60]
     path = os.path.join(OUTBOX, "%s-%s.txt" % (db.now().strftime("%Y%m%d-%H%M%S"), slug))
@@ -31,7 +42,14 @@ def send(to, subject, body):
         fh.write(letter)
 
     host = os.environ.get("SMTP_HOST")
-    if host:
+    if not host:
+        print("\n" + "-" * 68)
+        print(letter.rstrip())
+        print("-" * 68)
+        print("[mail] written to %s\n" % path)
+        return True
+
+    try:
         msg = EmailMessage()
         msg["To"], msg["From"], msg["Subject"] = to, SENDER, subject
         msg.set_content(body)
@@ -42,16 +60,15 @@ def send(to, subject, body):
                 smtp.login(user, password or "")
             smtp.send_message(msg)
         print("[mail] sent to %s via %s  (copy: %s)" % (to, host, path))
-    else:
-        print("\n" + "-" * 68)
-        print(letter.rstrip())
-        print("-" * 68)
-        print("[mail] written to %s\n" % path)
-    return path
+        return True
+    except (smtplib.SMTPException, OSError) as exc:
+        print("[mail] FAILED to send to %s via %s: %s  (copy kept: %s)" % (to, host, exc, path),
+              file=sys.stderr)
+        return False
 
 
 def send_login_link(email, url):
-    send(
+    return send(
         email,
         "Your key to the notebook",
         "Somebody (you, we hope) asked to open the Future with AI betting\n"
