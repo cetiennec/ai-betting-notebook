@@ -47,6 +47,28 @@ SECURE_COOKIES = BASE_URL.startswith("https://")
 # forwarding header itself. Fly is recognised without it.
 TRUST_FORWARDED = os.environ.get("NOTEBOOK_TRUST_FORWARDED") == "1"
 is_keeper = db.is_keeper  # who may keep the ledger; see NOTEBOOK_KEEPERS
+
+
+def bet_trouble(claim, category, horizon, keeping=None):
+    """What is wrong with a bet as written, or None if it will do.
+
+    `keeping` is the horizon a bet already carries: a year that has since
+    gone by is still allowed to stand when it is not what is being
+    changed, or an old bet could never have its wording corrected."""
+    year = db.now().year
+    if len(claim) < 12:
+        return "A bet needs to be a whole claim."
+    if len(claim) > MAX_CLAIM:
+        return "A claim wants %d characters at most." % MAX_CLAIM
+    if category not in db.CATEGORIES:
+        return "Pick a subject."
+    if not horizon.isdigit():
+        return "The horizon must be a year between %d and %d." % (year, year + 75)
+    if int(horizon) == keeping:
+        return None
+    if not year <= int(horizon) <= year + 75:
+        return "The horizon must be a year between %d and %d." % (year, year + 75)
+    return None
 # Nobody needs to post more than a long bet; refuse the rest unread.
 MAX_BODY_BYTES = 64 * 1024
 MAX_CLAIM = 240
@@ -285,6 +307,8 @@ class Notebook(BaseHTTPRequestHandler):
                 return self.page_index(conn, user, args)
             if path == "/static" or path.startswith("/static/"):
                 return self.serve_static(path[len("/static/"):])
+            if path.startswith("/bet/") and path.endswith("/revise"):
+                return self.page_revise(conn, user, path.split("/")[2])
             if path.startswith("/bet/"):
                 return self.page_bet(conn, user, path.split("/")[2])
             if path == "/propose":
@@ -358,6 +382,8 @@ class Notebook(BaseHTTPRequestHandler):
                 return self.post_desk(conn, user, form)
             if path.startswith("/bet/") and path.endswith("/vote"):
                 return self.post_vote(conn, user, path.split("/")[2])
+            if path.startswith("/bet/") and path.endswith("/revise"):
+                return self.post_revise(conn, user, path.split("/")[2], form)
             if path.startswith("/bet/") and path.endswith("/resolve"):
                 return self.post_resolve(conn, user, path.split("/")[2], form)
             if path == "/keep":
@@ -403,7 +429,12 @@ class Notebook(BaseHTTPRequestHandler):
             return self.reply(
                 render.message_page("A torn page", "That entry is not in the ledger.", user), 404
             )
-        return self.reply(render.bet_page(bet, user, self.csrf_token()))
+        return self.reply(
+            render.bet_page(
+                bet, user, self.csrf_token(),
+                earlier=db.revisions(conn, bet["id"]) if bet["revisions"] else [],
+            )
+        )
 
     def selection(self, conn, user, args):
         """The set of bets a print or export request is asking for."""
@@ -617,6 +648,66 @@ class Notebook(BaseHTTPRequestHandler):
         user = db.user_by_email(conn, email) or db.create_user(conn, email)
         return self.go("/?welcome=1", cookie=db.new_session(conn, user["id"]))
 
+    # --- changing a bet you wrote ------------------------------------------
+
+    def revisable(self, conn, user, raw_id):
+        """The bet, if this hand may change it. Otherwise a page saying
+        why not."""
+        if not user or not raw_id.isdigit():
+            return None, self.go("/enter")
+        bet = db.get_bet(conn, int(raw_id), user["id"])
+        if bet is None:
+            return None, self.reply(
+                render.message_page("A torn page", "That entry is not in the ledger.", user), 404
+            )
+        if bet["user_id"] != user["id"]:
+            return None, self.reply(
+                render.message_page(
+                    "Not your hand", "Only the hand that wrote a bet may change it.", user
+                ),
+                403,
+            )
+        if bet["status"] != "open":
+            return None, self.reply(
+                render.message_page(
+                    "Already settled",
+                    "This one has been called. A settled bet is left as it was written.",
+                    user,
+                ),
+                403,
+            )
+        return bet, None
+
+    def page_revise(self, conn, user, raw_id):
+        bet, refusal = self.revisable(conn, user, raw_id)
+        if refusal:
+            return refusal
+        return self.reply(render.revise_page(bet, user, self.csrf_token()))
+
+    def post_revise(self, conn, user, raw_id, form):
+        bet, refusal = self.revisable(conn, user, raw_id)
+        if refusal:
+            return refusal
+
+        claim = form.get("claim", "").strip()
+        reasoning = form.get("reasoning", "").strip()
+        category = form.get("category", "").strip()
+        horizon = form.get("horizon", "").strip()
+        values = {
+            "claim": claim, "reasoning": reasoning,
+            "category": category, "horizon": horizon,
+        }
+        trouble = bet_trouble(claim, category, horizon, keeping=bet["horizon"])
+        if trouble:
+            return self.reply(
+                render.revise_page(bet, user, self.csrf_token(), values, trouble), 400
+            )
+        db.revise_bet(
+            conn, bet["id"], user["id"], claim, reasoning[:MAX_REASONING],
+            category, int(horizon),
+        )
+        return self.go("/bet/%d" % bet["id"])
+
     def post_propose(self, conn, user, form):
         if not user:
             return self.go("/enter")
@@ -629,36 +720,14 @@ class Notebook(BaseHTTPRequestHandler):
             "claim": claim, "reasoning": reasoning, "category": category,
             "horizon": horizon, "anonymous": anonymous,
         }
-        year = db.now().year
         # Still their first: the rules stay up while they fix whatever
         # the notebook has just complained about.
         first = not db.has_written(conn, user["id"])
 
-        if len(claim) < 12:
+        trouble = bet_trouble(claim, category, horizon)
+        if trouble:
             return self.reply(
-                render.propose_page(user, self.csrf_token(), values,
-                                    "A bet needs to be a whole claim.", first),
-                400,
-            )
-        if len(claim) > MAX_CLAIM:
-            return self.reply(
-                render.propose_page(
-                    user, self.csrf_token(), values,
-                    "A claim wants %d characters at most." % MAX_CLAIM, first,
-                ),
-                400,
-            )
-        if category not in db.CATEGORIES:
-            return self.reply(
-                render.propose_page(user, self.csrf_token(), values, "Pick a subject.", first), 400
-            )
-        if not horizon.isdigit() or not year <= int(horizon) <= year + 75:
-            return self.reply(
-                render.propose_page(
-                    user, self.csrf_token(), values,
-                    "The horizon must be a year between %d and %d." % (year, year + 75), first,
-                ),
-                400,
+                render.propose_page(user, self.csrf_token(), values, trouble, first), 400
             )
         bet_id = db.create_bet(
             conn, user["id"], claim, reasoning[:MAX_REASONING], category, int(horizon), anonymous

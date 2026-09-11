@@ -276,7 +276,103 @@ def index(bets, counts, user, query, category, status, sort, csrf, note=""):
     return layout("The ledger", body, user, description=DESCRIPTION, path="/")
 
 
-def bet_page(bet, user, csrf, note=""):
+def revise_page(bet, user, csrf, values=None, error=""):
+    """Changing a bet you wrote. The form says plainly that the old
+    wording stays on the page, because that is the whole bargain."""
+    values = values or {
+        "claim": bet["claim"], "reasoning": bet["reasoning"],
+        "category": bet["category"], "horizon": bet["horizon"],
+    }
+    year = db.now().year
+    options = "".join(
+        '<option%s>%s</option>' % (" selected" if values.get("category") == c else "", e(c))
+        for c in db.CATEGORIES
+    )
+    note = '<div class="notice">%s</div>' % e(error) if error else ""
+    # A horizon already gone by may stand, but cannot be picked afresh.
+    low = min(year, bet["horizon"])
+    body = """%(note)s
+<h2>Change this bet</h2>
+<p class="lede">Correct the wording, sharpen the claim, say more about why.
+   What it said before stays on the page underneath, with the date it
+   changed &mdash; a hand may correct itself here, but not quietly.</p>
+<form method="post" action="/bet/%(id)d/revise">
+  %(csrf)s
+  <label class="field"><span class="name">The claim</span>
+    <input type="text" name="claim" maxlength="240" required value="%(claim)s"></label>
+  <label class="field"><span class="name">Why you think so</span>
+    <textarea name="reasoning" maxlength="4000">%(reasoning)s</textarea></label>
+  <label class="field"><span class="name">Subject</span>
+    <select name="category">%(options)s</select></label>
+  <label class="field"><span class="name">Judged by the year</span>
+    <input type="number" name="horizon" min="%(min)d" max="%(max)d" value="%(horizon)s" required></label>
+  <div class="deeds">
+    <button type="submit">Write the change in</button>
+    <a class="button" href="/bet/%(id)d">Leave it as it is</a>
+  </div>
+</form>""" % {
+        "note": note,
+        "id": bet["id"],
+        "csrf": csrf_field(csrf),
+        "claim": e(values.get("claim", "")),
+        "reasoning": e(values.get("reasoning", "")),
+        "options": options,
+        "min": low,
+        "max": year + 75,
+        "horizon": e(values.get("horizon", bet["horizon"])),
+    }
+    return layout("Change a bet", body, user)
+
+
+def earlier_wording(bet, earlier):
+    """What the bet used to say, newest change first.
+
+    Each row holds the wording it replaced, so what a row was changed
+    *into* is the row above it - or the bet as it stands now, for the
+    most recent one."""
+    if not earlier:
+        return ""
+
+    def changed_between(before, after):
+        names = []
+        for field, name in (("claim", "the claim"), ("reasoning", "the reasoning"),
+                            ("category", "the subject"), ("horizon", "the horizon")):
+            if before[field] != after[field]:
+                names.append(name)
+        if not names:
+            return "something"
+        if len(names) == 1:
+            return names[0]
+        return "%s and %s" % (", ".join(names[:-1]), names[-1])
+
+    blocks = []
+    after = bet
+    for was in earlier:
+        blocks.append(
+            """<li class="was">
+  <p class="when">%(what)s changed, %(when)s &mdash; until then it read:</p>
+  <p class="claim">%(claim)s</p>
+  <p class="meta"><span class="cat">%(cat)s</span> &middot; by %(year)d</p>
+  %(because)s
+</li>""" % {
+                "what": e(changed_between(was, after).capitalize()),
+                "when": date_of(was["replaced_at"]),
+                "claim": e(was["claim"]),
+                "cat": e(was["category"]),
+                "year": was["horizon"],
+                "because": '<p class="because">%s</p>' % e(was["reasoning"].strip())
+                           if was["reasoning"].strip() else "",
+            }
+        )
+        after = was
+
+    return """<h2>What it said before</h2>
+<p class="hint">Kept as written. Nothing on this page is ever taken back,
+   only added to.</p>
+<ol class="earlier">%s</ol>""" % "".join(blocks)
+
+
+def bet_page(bet, user, csrf, note="", earlier=()):
     mine = user and user["id"] == bet["user_id"]
     resolve = ""
     if mine:
@@ -324,14 +420,19 @@ def bet_page(bet, user, csrf, note=""):
   <p class="colophon">%(cat)s &middot; to be judged by %(year)d &middot;
      written by %(who)s on %(when)s</p>
   %(because)s
-  <dl class="record">
-    <dt>Found interesting by</dt><dd>%(votes)d %(word)s</dd>
-    <dt>Entry number</dt><dd>%(id)d</dd>
-  </dl>
-  <div class="deeds no-print">
-    %(votebtn)s
-    <a class="button" href="/">Back to the ledger</a>
+  <div class="bet-foot">
+    <dl class="record">
+      <dt>Found interesting by</dt><dd>%(votes)d %(word)s</dd>
+      %(changed)s
+      <dt>Entry number</dt><dd>%(id)d</dd>
+    </dl>
+    <div class="deeds no-print">
+      %(votebtn)s
+      %(revise)s
+      <a class="button" href="/">Back to the ledger</a>
+    </div>
   </div>
+  %(earlier)s
   %(verdict)s
   %(resolve)s
 </div>""" % {
@@ -351,6 +452,17 @@ def bet_page(bet, user, csrf, note=""):
             '<button type="submit" name="back" value="1">%s</button></form>'
             % (bet["id"], csrf_field(csrf), "Take back my vote" if bet["voted"] else "Mark it interesting")
         ),
+        "changed": (
+            "<dt>Changed</dt><dd>%d %s since it was written</dd>"
+            % (bet["revisions"], "time" if bet["revisions"] == 1 else "times")
+            if bet["revisions"] else ""
+        ),
+        "revise": (
+            '<a class="button" href="/bet/%d/revise">Change it</a>' % bet["id"]
+            if mine and bet["status"] == "open"
+            else ""
+        ),
+        "earlier": earlier_wording(bet, earlier),
         "verdict": verdict,
         "resolve": resolve,
     }

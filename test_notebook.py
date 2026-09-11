@@ -369,6 +369,121 @@ class TestKeysAreNotShownWhenTheyAreReallyPosted(unittest.TestCase):
 
 # --- writing a bet --------------------------------------------------------
 
+class TestChangingABet(FreshNotebookTestCase):
+    """A hand may correct itself, but not quietly: what a bet said before
+    stays on the page. That is the whole bargain of allowing edits at all
+    in a book whose point is being on the record."""
+
+    FIRST = "By 2033, half of all new code in production will be machine-written."
+    SECOND = "By 2033, most new code merged at large firms will be machine-written."
+
+    def a_bet(self, email="writer@example.org", claim=None):
+        author = self.signed_in(email)
+        reply = author.post("/propose", {
+            "claim": claim or self.FIRST,
+            "reasoning": "Because review is the bottleneck, not typing.",
+            "category": "work & economy",
+            "horizon": "2033",
+        })
+        self.assertEqual(reply.status, 303, reply.body[:400])
+        return author, reply.headers["Location"]
+
+    def test_the_author_can_change_the_wording(self):
+        author, where = self.a_bet()
+        reply = author.post(where + "/revise", {
+            "claim": self.SECOND,
+            "reasoning": "Because review is the bottleneck, not typing.",
+            "category": "work & economy",
+            "horizon": "2033",
+        }, csrf_from=where + "/revise")
+        self.assertEqual(reply.status, 303)
+        page = author.get(where).body
+        self.assertIn("most new code merged at large firms", page)
+
+    def test_what_it_said_before_stays_on_the_page(self):
+        author, where = self.a_bet()
+        author.post(where + "/revise", {
+            "claim": self.SECOND, "reasoning": "Because review is the bottleneck, not typing.",
+            "category": "work & economy", "horizon": "2033",
+        }, csrf_from=where + "/revise")
+
+        # to anybody, not only the author
+        page = self.notebook.visitor().get(where).body
+        self.assertIn("What it said before", page)
+        self.assertIn("half of all new code in production", page)
+        self.assertIn("The claim changed", page)
+        self.assertIn("Changed", page)
+
+    def test_a_horizon_moved_is_recorded_as_such(self):
+        author, where = self.a_bet()
+        author.post(where + "/revise", {
+            "claim": self.FIRST, "reasoning": "Because review is the bottleneck, not typing.",
+            "category": "work & economy", "horizon": "2039",
+        }, csrf_from=where + "/revise")
+        page = self.notebook.visitor().get(where).body
+        self.assertIn("The horizon changed", page)
+        self.assertIn("by 2033", page)  # the year it used to carry
+
+    def test_every_change_is_kept_not_just_the_last(self):
+        author, where = self.a_bet()
+        for claim in (self.SECOND, "By 2033, nearly all new code at large firms is machine-written."):
+            author.post(where + "/revise", {
+                "claim": claim, "reasoning": "Because review is the bottleneck, not typing.",
+                "category": "work & economy", "horizon": "2033",
+            }, csrf_from=where + "/revise")
+        page = self.notebook.visitor().get(where).body
+        self.assertIn("half of all new code in production", page)   # the first
+        self.assertIn("most new code merged at large firms", page)  # the second
+        self.assertIn("2 times since it was written", page)
+
+    def test_a_change_that_changes_nothing_is_not_recorded(self):
+        author, where = self.a_bet()
+        author.post(where + "/revise", {
+            "claim": self.FIRST, "reasoning": "Because review is the bottleneck, not typing.",
+            "category": "work & economy", "horizon": "2033",
+        }, csrf_from=where + "/revise")
+        self.assertNotIn("What it said before", self.notebook.visitor().get(where).body)
+
+    def test_nobody_else_may_change_it(self):
+        author, where = self.a_bet()
+        stranger = self.signed_in("stranger@example.org")
+        self.assertEqual(stranger.get(where + "/revise").status, 403)
+        refused = stranger.post(where + "/revise", {
+            "claim": "By 2033, I get to put words in another hand's mouth.",
+            "reasoning": "", "category": "work & economy", "horizon": "2033",
+        }, csrf_from="/")
+        self.assertEqual(refused.status, 403)
+        self.assertIn("half of all new code", self.notebook.visitor().get(where).body)
+
+    def test_a_settled_bet_is_left_as_it_was_written(self):
+        author, where = self.a_bet()
+        author.post(where + "/resolve", {"status": "came_true", "verdict": "It did."},
+                    csrf_from=where)
+        self.assertEqual(author.get(where + "/revise").status, 403)
+        self.assertNotIn("Change it", author.get(where).body)
+
+    def test_a_change_still_has_to_be_a_bet(self):
+        author, where = self.a_bet()
+        reply = author.post(where + "/revise", {
+            "claim": "too short", "reasoning": "", "category": "work & economy",
+            "horizon": "2033",
+        }, csrf_from=where + "/revise")
+        self.assertEqual(reply.status, 400)
+
+    def test_a_horizon_already_gone_by_does_not_block_a_correction(self):
+        """An old bet whose year has passed must still be correctable."""
+        author, where = self.a_bet(claim="By 2027, this bet will need its typo fixed.")
+        # move the ledger's idea of the horizon into the past by editing
+        # only the wording, keeping the year it already carries
+        page = author.get(where + "/revise").body
+        year = re.search(r'name="horizon"[^>]*value="(\d+)"', page).group(1)
+        reply = author.post(where + "/revise", {
+            "claim": "By 2027, this bet will have had its typo fixed.",
+            "reasoning": "", "category": "work & economy", "horizon": year,
+        }, csrf_from=where + "/revise")
+        self.assertEqual(reply.status, 303)
+
+
 class TestProposing(NotebookTestCase):
     def signed_in(self, email):
         visitor = self.notebook.visitor()

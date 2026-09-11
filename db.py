@@ -104,8 +104,23 @@ CREATE TABLE IF NOT EXISTS rate_limits (
     created_at TEXT NOT NULL
 );
 
+-- What a bet said before somebody changed it. One row per edit, holding
+-- the wording it is replacing, so the whole history of a claim can be
+-- read back. Nothing here is ever updated or deleted: a notebook whose
+-- earlier pages can be rewritten is not a record of anything.
+CREATE TABLE IF NOT EXISTS bet_revisions (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    bet_id     INTEGER NOT NULL REFERENCES bets(id) ON DELETE CASCADE,
+    claim      TEXT NOT NULL,
+    reasoning  TEXT NOT NULL DEFAULT '',
+    category   TEXT NOT NULL,
+    horizon    INTEGER NOT NULL,
+    replaced_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_bets_category ON bets(category);
 CREATE INDEX IF NOT EXISTS idx_rate_limits_bucket ON rate_limits(bucket);
+CREATE INDEX IF NOT EXISTS idx_revisions_bet ON bet_revisions(bet_id);
 """
 
 # Split out from SCHEMA: these name columns (anon_id) that only exist on
@@ -316,6 +331,7 @@ BET_SELECT = """
 SELECT b.*,
        u.pseudo AS author_pseudo,
        u.show_pseudo AS author_show_pseudo,
+       (SELECT COUNT(*) FROM bet_revisions r WHERE r.bet_id = b.id) AS revisions,
        (SELECT COUNT(*) FROM votes v WHERE v.bet_id = b.id) AS votes,
        (SELECT COUNT(*) FROM votes v WHERE v.bet_id = b.id
           AND (v.user_id = ? OR v.anon_id = ?)) AS voted
@@ -378,6 +394,43 @@ def has_written(conn, user_id):
         "SELECT 1 FROM bets WHERE user_id = ? LIMIT 1", (user_id,)
     ).fetchone()
     return row is not None
+
+
+def revise_bet(conn, bet_id, user_id, claim, reasoning, category, horizon):
+    """Change a bet, keeping what it said before.
+
+    The old wording is copied into bet_revisions first, so the page can
+    show the whole history: a hand may correct itself, but not quietly.
+    Returns False if nothing actually changed."""
+    was = conn.execute(
+        "SELECT * FROM bets WHERE id = ? AND user_id = ?", (bet_id, user_id)
+    ).fetchone()
+    if was is None:
+        return False
+    if (was["claim"], was["reasoning"], was["category"], was["horizon"]) == (
+        claim, reasoning, category, horizon
+    ):
+        return False
+    with conn:
+        conn.execute(
+            """INSERT INTO bet_revisions (bet_id, claim, reasoning, category, horizon, replaced_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (bet_id, was["claim"], was["reasoning"], was["category"], was["horizon"], stamp()),
+        )
+        conn.execute(
+            """UPDATE bets SET claim = ?, reasoning = ?, category = ?, horizon = ?
+               WHERE id = ? AND user_id = ?""",
+            (claim, reasoning, category, horizon, bet_id, user_id),
+        )
+    return True
+
+
+def revisions(conn, bet_id):
+    """Every earlier wording, newest first."""
+    return conn.execute(
+        "SELECT * FROM bet_revisions WHERE bet_id = ? ORDER BY replaced_at DESC, id DESC",
+        (bet_id,),
+    ).fetchall()
 
 
 def resolve_bet(conn, bet_id, user_id, status, verdict):
