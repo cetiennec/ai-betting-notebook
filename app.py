@@ -341,6 +341,12 @@ class Notebook(BaseHTTPRequestHandler):
                 if not user:
                     return self.go("/enter")
                 return self.reply(self.desk(conn, user))
+            if path == "/subjects":
+                return self.reply(
+                    render.subjects_page(user, db.category_counts(conn))
+                )
+            if path.startswith("/subject/"):
+                return self.page_subject(conn, user, path.split("/", 2)[2], args)
             if path == "/house":
                 return self.reply(render.house_page(user))
             if path == "/robots.txt":
@@ -425,6 +431,29 @@ class Notebook(BaseHTTPRequestHandler):
             render.index(
                 bets, db.category_counts(conn), user, query, category, status, sort,
                 self.csrf_token(), note,
+            )
+        )
+
+    def page_subject(self, conn, user, slug, args):
+        """One subject's own page. A plain address rather than a query
+        string, because it is a place worth linking to and arriving at."""
+        subject = db.SUBJECT_BY_SLUG.get(slug.strip("/").lower())
+        if subject is None:
+            return self.reply(
+                render.message_page(
+                    "No such subject",
+                    "The notebook keeps twelve of them.", user, link="/subjects",
+                ),
+                404,
+            )
+        sort = args.get("sort", "interesting")
+        status = args.get("status", "")
+        bets = db.list_bets(
+            conn, user["id"] if user else 0, "", subject, status, sort, self.anon_id()
+        )
+        return self.reply(
+            render.subject_page(
+                bets, db.category_counts(conn), user, subject, status, sort, self.csrf_token()
             )
         )
 
@@ -515,7 +544,17 @@ class Notebook(BaseHTTPRequestHandler):
         """Every page worth finding from outside: the ledger, the rules, and
         each entry. A desk belongs to one person and is not in here; nor is
         anything struck, which list_bets already leaves out."""
-        pages = [(BASE_URL + "/", "daily"), (BASE_URL + "/house", "monthly")]
+        pages = [
+            (BASE_URL + "/", "daily"),
+            (BASE_URL + "/subjects", "weekly"),
+            (BASE_URL + "/house", "monthly"),
+        ]
+        # A page per subject: twelve ways in for a reader, and twelve more
+        # corners of the ledger for a crawler that only ever sees the front.
+        pages += [
+            ("%s/subject/%s" % (BASE_URL, db.subject_slug(c)), "weekly")
+            for c in db.CATEGORIES
+        ]
         pages += [
             ("%s/bet/%d" % (BASE_URL, b["id"]), "weekly")
             for b in db.list_bets(conn, sort="newest")

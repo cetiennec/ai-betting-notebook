@@ -433,6 +433,16 @@ def has_written(conn, user_id):
     return row is not None
 
 
+def subject_slug(subject):
+    """'law & rights' -> 'law-rights', for an address worth reading."""
+    return "-".join(
+        "".join(c for c in word if c.isalnum()) for word in subject.split()
+    ).strip("-").replace("--", "-").lower()
+
+
+SUBJECT_BY_SLUG = {subject_slug(c): c for c in CATEGORIES}
+
+
 def clean_subjects(wanted):
     """Known subjects, no repeats, in the order they were given.
 

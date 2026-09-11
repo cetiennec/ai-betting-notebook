@@ -1,6 +1,8 @@
 """Every page in the notebook, written out as plain HTML strings."""
 
+import difflib
 import os
+import re
 from html import escape
 from urllib.parse import urlencode
 
@@ -51,9 +53,17 @@ def subject_boxes(chosen):
   </div>""" % (db.MAX_SUBJECTS, boxes)
 
 
-def subject_line(bet):
-    """Every subject a bet carries, for a meta line."""
-    return " &middot; ".join(e(s) for s in db.subjects_on(bet))
+def subject_link(subject):
+    return '<a href="/subject/%s">%s</a>' % (e(db.subject_slug(subject)), e(subject))
+
+
+def subject_line(bet, linked=True):
+    """Every subject a bet carries, for a meta line. Each one leads to the
+    rest of the ledger filed under it."""
+    shown = db.subjects_on(bet)
+    if not linked:
+        return " &middot; ".join(e(s) for s in shown)
+    return " &middot; ".join(subject_link(s) for s in shown)
 
 
 def subjects_anywhere(row):
@@ -296,6 +306,7 @@ def index(bets, counts, user, query, category, status, sort, csrf, note=""):
 %(ledger)s
 <div class="deeds">
   <a class="button" href="/propose">Propose a bet</a>
+  <a class="button" href="/subjects">Browse by subject</a>
   %(take)s
 </div>""" % {
         "note": note,
@@ -359,8 +370,37 @@ def revise_page(bet, user, csrf, values=None, error=""):
     return layout("Change a bet", body, user)
 
 
+def words_of(text):
+    """Words and the spaces between them, so a diff can be put back
+    together exactly as it was written."""
+    return re.findall(r"\S+|\s+", text or "")
+
+
+def word_diff(before, after):
+    """What was taken out and what was put in, and nothing else.
+
+    The whole wording is kept in the ledger; it is only the page that is
+    better for showing the handful of words that moved rather than two
+    near-identical paragraphs one above the other."""
+    moved = difflib.SequenceMatcher(
+        a=words_of(before), b=words_of(after), autojunk=False
+    )
+    out = []
+    for what, i1, i2, j1, j2 in moved.get_opcodes():
+        gone = "".join(words_of(before)[i1:i2])
+        came = "".join(words_of(after)[j1:j2])
+        if what == "equal":
+            out.append(e(gone))
+        else:
+            if gone:
+                out.append("<del>%s</del>" % e(gone))
+            if came:
+                out.append("<ins>%s</ins>" % e(came))
+    return "".join(out)
+
+
 def earlier_wording(bet, earlier):
-    """What the bet used to say, newest change first.
+    """Every change to a bet, newest first, as what went and what came.
 
     Each row holds the wording it replaced, so what a row was changed
     *into* is the row above it - or the bet as it stands now, for the
@@ -368,47 +408,58 @@ def earlier_wording(bet, earlier):
     if not earlier:
         return ""
 
-    def changed_between(before, after):
-        names = []
-        for field, name in (("claim", "the claim"), ("reasoning", "the reasoning"),
-                            ("horizon", "the horizon")):
-            if before[field] != after[field]:
-                names.append(name)
-        # An earlier wording keeps its own list of subjects; the bet as it
-        # stands carries them on the row from BET_SELECT.
+    def changes(before, after):
+        """Only the fields that actually moved, each shown as a diff."""
+        shown = []
+        if before["claim"] != after["claim"]:
+            shown.append(("The claim",
+                          '<p class="claim">%s</p>' % word_diff(before["claim"], after["claim"])))
+        if (before["reasoning"] or "").strip() != (after["reasoning"] or "").strip():
+            shown.append(("The reasoning",
+                          '<p class="because">%s</p>'
+                          % word_diff(before["reasoning"], after["reasoning"])))
         had, has = subjects_anywhere(before), subjects_anywhere(after)
         if had != has:
-            names.append("the subject" if len(had) == len(has) == 1 else "the subjects")
-        if not names:
-            return "something"
-        if len(names) == 1:
-            return names[0]
-        return "%s and %s" % (", ".join(names[:-1]), names[-1])
+            # A list, so say which went and which came rather than running
+            # a word diff over the whole line and repeating the unchanged.
+            moved = ["<del>%s</del>" % e(s) for s in had if s not in has]
+            moved += ["<ins>%s</ins>" % e(s) for s in has if s not in had]
+            kept = [e(s) for s in has if s in had]
+            shown.append((
+                "The subject" if len(had) == len(has) == 1 else "The subjects",
+                '<p class="meta">%s</p>' % " &middot; ".join(kept + moved),
+            ))
+        if before["horizon"] != after["horizon"]:
+            shown.append(("The horizon",
+                          '<p class="meta">%s</p>'
+                          % word_diff(str(before["horizon"]), str(after["horizon"]))))
+        return shown
 
     blocks = []
     after = bet
     for was in earlier:
+        moved = changes(was, after)
+        if not moved:
+            after = was
+            continue
         blocks.append(
-            """<li class="was">
-  <p class="when">%(what)s changed, %(when)s &mdash; until then it read:</p>
-  <p class="claim">%(claim)s</p>
-  <p class="meta"><span class="cat">%(cat)s</span> &middot; by %(year)d</p>
-  %(because)s
-</li>""" % {
-                "what": e(changed_between(was, after).capitalize()),
-                "when": date_of(was["replaced_at"]),
-                "claim": e(was["claim"]),
-                "cat": subject_line_was(was),
-                "year": was["horizon"],
-                "because": '<p class="because">%s</p>' % e(was["reasoning"].strip())
-                           if was["reasoning"].strip() else "",
-            }
+            '<li class="was"><p class="when">%s</p>%s</li>'
+            % (
+                e("Changed %s" % date_of(was["replaced_at"])),
+                "".join(
+                    '<div class="moved"><span class="which">%s</span>%s</div>' % (e(label), html)
+                    for label, html in moved
+                ),
+            )
         )
         after = was
 
-    return """<h2>What it said before</h2>
-<p class="hint">Kept as written. Nothing on this page is ever taken back,
-   only added to.</p>
+    if not blocks:
+        return ""
+    return """<h2>What has changed</h2>
+<p class="hint">Every earlier wording is kept; what is shown here is only
+   what moved &mdash; <del>struck</del> for what went,
+   <ins>underlined</ins> for what came.</p>
 <ol class="earlier">%s</ol>""" % "".join(blocks)
 
 
@@ -839,6 +890,62 @@ def burn_page(user, csrf, bet):
         "csrf": csrf_field(csrf),
     }
     return layout("Burn an entry", body, user)
+
+
+def subjects_page(user, counts):
+    """The twelve, as a way in. Plain links, so a reader can browse by
+    subject and a crawler can find every corner of the ledger."""
+    seen = dict(counts)
+    rows = "".join(
+        """<li><a href="/subject/%s">%s</a>
+             <span class="n">%d %s</span></li>"""
+        % (e(db.subject_slug(c)), e(c), seen.get(c, 0),
+           "bet" if seen.get(c, 0) == 1 else "bets")
+        for c in db.CATEGORIES
+    )
+    body = """<h2>The subjects</h2>
+<p class="lede">Twelve of them, fixed. A bet may sit under as many as three,
+   so the same entry can be found from more than one of these.</p>
+<ul class="subject-list">%s</ul>
+<div class="deeds">
+  <a class="button" href="/">The whole ledger</a>
+  <a class="button" href="/propose">Propose a bet</a>
+</div>""" % rows
+    return layout(
+        "The subjects", body, user,
+        description="Every subject the notebook keeps bets under, from education "
+                    "and work to law, climate and war.",
+        path="/subjects",
+    )
+
+
+def subject_page(bets, counts, user, subject, status, sort, csrf):
+    """One subject's slice of the ledger, at an address of its own."""
+    if bets:
+        ledger = '<ol class="ledger">%s</ol>' % "".join(entry(b, user, csrf) for b in bets)
+    else:
+        ledger = ('<p class="lede">Nothing is filed under this one yet. '
+                  '<a href="/propose">Write the first.</a></p>')
+    body = """%(filters)s
+<h2>%(subject)s <span class="hint">(%(n)d %(word)s)</span></h2>
+%(ledger)s
+<div class="deeds">
+  <a class="button" href="/subjects">All twelve subjects</a>
+  <a class="button" href="/">The whole ledger</a>
+  <a class="button" href="/propose">Propose a bet</a>
+</div>""" % {
+        "filters": filter_bar(counts, "", subject, status, sort),
+        "subject": e(subject),
+        "n": len(bets),
+        "word": "bet" if len(bets) == 1 else "bets",
+        "ledger": ledger,
+    }
+    return layout(
+        subject, body, user,
+        description="Bets on what artificial intelligence will mean for %s, "
+                    "each with a year by which it should be judged." % subject,
+        path="/subject/%s" % db.subject_slug(subject),
+    )
 
 
 def house_page(user=None):

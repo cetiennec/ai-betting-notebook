@@ -285,6 +285,32 @@ form.inline { display: inline; }
 button.danger { border-style: dashed; color: var(--rubric); border-color: var(--rubric); }
 button.danger:hover { background: var(--rubric); color: var(--paper); }
 
+/* --- the twelve subjects ------------------------------------------------ */
+
+ul.subject-list {
+  list-style: none;
+  margin: 1rem 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 0.1rem 1.6rem;
+}
+ul.subject-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.45rem 0;
+  border-bottom: 1px dotted var(--rule);
+}
+ul.subject-list a { text-decoration: none; font-size: 1.02rem; }
+ul.subject-list .n {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 0.76rem;
+  color: var(--ink-faded);
+  white-space: nowrap;
+}
+
 /* --- the house rules --------------------------------------------------- */
 
 .rules-list { margin: 0.6rem 0 1.2rem; padding-left: 1.1rem; }
@@ -395,14 +421,37 @@ ol.earlier .when {
   font-variant: small-caps;
   letter-spacing: 0.06em;
   font-size: 0.8rem;
-  margin: 0 0 0.35rem;
+  margin: 0 0 0.45rem;
+}
+ol.earlier .moved { margin: 0 0 0.6rem; }
+ol.earlier .moved:last-child { margin-bottom: 0; }
+ol.earlier .which {
+  display: block;
+  font-variant: small-caps;
+  letter-spacing: 0.06em;
+  font-size: 0.74rem;
+  color: var(--ink-faded);
 }
 ol.earlier .claim {
   font-size: 1rem;
   line-height: 1.45;
   margin: 0 0 0.2rem;
+}
+
+/* What went, and what came. The red ink again, as a correction in a
+   margin would be. */
+del, ins {
+  text-decoration: none;
+  padding: 0 0.1rem;
+}
+del {
   text-decoration: line-through;
-  text-decoration-color: var(--rule);
+  text-decoration-color: var(--rubric);
+  color: var(--ink-faded);
+}
+ins {
+  border-bottom: 1px solid var(--rubric);
+  color: var(--ink);
 }
 ol.earlier .meta { font-size: 0.78rem; font-style: italic; margin: 0; }
 ol.earlier .meta .cat { font-variant: small-caps; font-style: normal; letter-spacing: 0.05em; }

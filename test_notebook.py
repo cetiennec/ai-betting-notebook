@@ -400,7 +400,7 @@ class TestChangingABet(FreshNotebookTestCase):
         page = author.get(where).body
         self.assertIn("most new code merged at large firms", page)
 
-    def test_what_it_said_before_stays_on_the_page(self):
+    def test_what_changed_is_shown_as_what_went_and_what_came(self):
         author, where = self.a_bet()
         author.post(where + "/revise", {
             "claim": self.SECOND, "reasoning": "Because review is the bottleneck, not typing.",
@@ -409,10 +409,25 @@ class TestChangingABet(FreshNotebookTestCase):
 
         # to anybody, not only the author
         page = self.notebook.visitor().get(where).body
-        self.assertIn("What it said before", page)
-        self.assertIn("half of all new code in production", page)
-        self.assertIn("The claim changed", page)
-        self.assertIn("Changed", page)
+        self.assertIn("What has changed", page)
+        self.assertIn("The claim", page)
+        self.assertIn("<del>half of all</del>", page)
+        self.assertIn("<ins>most</ins>", page)
+        # the words that did not move are not repeated as though they had
+        self.assertNotIn("<del>new code</del>", page)
+
+    def test_the_whole_earlier_wording_is_still_kept(self):
+        """The page shows only what moved; the ledger keeps everything, so
+        any earlier version can still be read back in full."""
+        author, where = self.a_bet()
+        author.post(where + "/revise", {
+            "claim": self.SECOND, "reasoning": "Because review is the bottleneck, not typing.",
+            "subject": "work & economy", "horizon": "2033",
+        }, csrf_from=where + "/revise")
+        kept = sqlite3.connect(self.notebook.db).execute(
+            "SELECT claim FROM bet_revisions ORDER BY id DESC LIMIT 1"
+        ).fetchone()[0]
+        self.assertEqual(kept, self.FIRST)
 
     def test_a_horizon_moved_is_recorded_as_such(self):
         author, where = self.a_bet()
@@ -421,8 +436,9 @@ class TestChangingABet(FreshNotebookTestCase):
             "subject": "work & economy", "horizon": "2039",
         }, csrf_from=where + "/revise")
         page = self.notebook.visitor().get(where).body
-        self.assertIn("The horizon changed", page)
-        self.assertIn("by 2033", page)  # the year it used to carry
+        self.assertIn("The horizon", page)
+        self.assertIn("<del>2033</del>", page)  # the year it used to carry
+        self.assertIn("<ins>2039</ins>", page)
 
     def test_every_change_is_kept_not_just_the_last(self):
         author, where = self.a_bet()
@@ -432,8 +448,9 @@ class TestChangingABet(FreshNotebookTestCase):
                 "subject": "work & economy", "horizon": "2033",
             }, csrf_from=where + "/revise")
         page = self.notebook.visitor().get(where).body
-        self.assertIn("half of all new code in production", page)   # the first
-        self.assertIn("most new code merged at large firms", page)  # the second
+        self.assertEqual(page.count('<li class="was">'), 2, "both changes should be shown")
+        self.assertIn("<del>half of all</del>", page)   # the first change
+        self.assertIn("<ins>nearly all</ins>", page)    # the second
         self.assertIn("2 times since it was written", page)
 
     def test_a_change_that_changes_nothing_is_not_recorded(self):
@@ -559,7 +576,39 @@ class TestSubjects(FreshNotebookTestCase):
         ))
         after = self.notebook.visitor().get(where).body
         self.assertIn("art &amp; culture", after)
-        self.assertIn("The subjects changed", after)
+        self.assertIn("The subjects", after)
+        self.assertIn("<ins>art &amp; culture</ins>", after)
+        # education was there before and after, so it is not shown as moved
+        self.assertNotIn("<ins>education</ins>", after)
+
+
+class TestBrowsingBySubject(NotebookTestCase):
+    def test_each_subject_has_a_page_of_its_own(self):
+        reply = self.notebook.visitor().get("/subject/law-rights")
+        self.assertEqual(reply.status, 200)
+        self.assertIn("malpractice claim", reply.body)
+
+    def test_the_subject_on_a_bet_leads_to_it(self):
+        page = self.notebook.visitor().get("/bet/1").body
+        self.assertIn('href="/subject/information-trust"', page)
+
+    def test_the_index_lists_all_twelve_with_their_counts(self):
+        page = self.notebook.visitor().get("/subjects").body
+        for subject in ("education", "law-rights", "love-friendship"):
+            self.assertIn('href="/subject/%s"' % subject, page)
+
+    def test_an_invented_subject_is_a_blank_page(self):
+        self.assertEqual(self.notebook.visitor().get("/subject/nonsense").status, 404)
+
+    def test_the_subject_pages_are_in_the_sitemap(self):
+        sitemap = self.notebook.visitor().get("/sitemap.xml").body
+        self.assertIn("/subjects", sitemap)
+        self.assertIn("/subject/climate-environment", sitemap)
+
+    def test_a_subject_page_says_what_it_is_for_a_link_preview(self):
+        page = self.notebook.visitor().get("/subject/war-security").body
+        self.assertIn('property="og:title"', page)
+        self.assertIn("war &amp; security", page)
 
 
 class TestProposing(NotebookTestCase):

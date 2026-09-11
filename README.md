@@ -41,10 +41,10 @@ python3 test_notebook.py                     # the tests; -v to name each one
 |---|---|
 | **Propose** | a claim, the reasoning behind it, a subject, and the year by which it should be judged. A hand writing its first bet gets the house rules in short above the form, once |
 | **Mark** | one "interesting" mark per bet, toggleable; the ledger sorts by it. No account needed — a signed-in mark is tied to your user, an anonymous one to a browser cookie |
-| **Change** | the hand that wrote a bet can correct it while it is open, and every earlier wording stays on the page with the date it changed. A hand may correct itself, but not quietly |
+| **Change** | the hand that wrote a bet can correct it while it is open. The ledger keeps every earlier wording in full; the page shows only what moved, struck for what went and underlined for what came. A hand may correct itself, but not quietly |
 | **Settle** | the author records how it turned out, with a line on why. A settled bet is left as it was written |
 | **Subjects** | twelve of them, from education and work & economy to war & security and love & friendship. A bet may carry up to three: some genuinely sit at a crossroads, and filing a malpractice claim under *health & medicine* alone loses whoever went looking under *law & rights* |
-| **Search** | one box for words, a box beside it for the subject; both combine with standing and order |
+| **Search** | one box for words, a box beside it for the subject; both combine with standing and order. Every subject is also a page of its own at `/subject/<name>`, listed at `/subjects` |
 | **Sign in** | email only. A one-shot key, valid an hour, and a session that lasts ninety days |
 | **Pen name** | shown or hidden, as a standing preference at your desk or per bet. Your address is never shown either way |
 | **Print** | *your copies*, at your desk: your own bets, the ones you backed, or the whole ledger — as a print sheet or plain text |
@@ -94,7 +94,7 @@ is worse than removing it.
 
 ## Tests
 
-Seventy-six of them, standard library only like the rest. Each starts a real
+Eighty-three of them, standard library only like the rest. Each starts a real
 notebook on a free port with its own throwaway ledger and talks to it over
 HTTP, so the socket and header layers are covered rather than mocked — several
 of the things they guard against only exist down there. They run on every
