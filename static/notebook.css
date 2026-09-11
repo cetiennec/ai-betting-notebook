@@ -136,7 +136,7 @@ ol.ledger { list-style: none; margin: 0; padding: 0; }
    rather than the page reading as a wall. */
 .entry {
   display: grid;
-  grid-template-columns: 3.9rem 1fr;
+  grid-template-columns: 4.2rem 1fr;
   gap: 0 1rem;
   padding: 1.45rem 0;
   border-bottom: 1px solid var(--rule);
@@ -237,13 +237,28 @@ button, .button {
   display: inline-block;
 }
 button:hover, .button:hover { background: var(--ink); color: var(--paper); }
+/* The one thing a reader can actually do on the ledger, so it is the one
+   thing set in the red ink - rubrication, which is old enough for this
+   notebook. Uncast it is an empty stamp; cast, it is inked in. */
 button.vote {
-  border-style: dashed;
-  background: transparent;
-  font-size: 0.8rem;
-  padding: 0.1rem 0.5rem;
+  font-family: var(--mono);
+  font-variant: normal;
+  letter-spacing: 0;
+  font-size: 1rem;
+  line-height: 1;
+  min-width: 1.9rem;
+  padding: 0.25rem 0.4rem;
+  color: var(--rubric);
+  background: #fdf4ec;
+  border: 1px solid var(--rubric);
 }
-button.vote.cast { border-style: solid; background: var(--ink); color: var(--paper); }
+button.vote:hover { background: var(--rubric); color: var(--paper); }
+button.vote.cast {
+  background: var(--rubric);
+  color: var(--paper);
+  border-color: var(--rubric);
+}
+button.vote.cast:hover { background: #fdf4ec; color: var(--rubric); }
 
 form.inline { display: inline; }
 .deeds { margin-top: 1.6rem; display: flex; gap: 0.6rem; flex-wrap: wrap; }
