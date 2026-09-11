@@ -49,7 +49,7 @@ TRUST_FORWARDED = os.environ.get("NOTEBOOK_TRUST_FORWARDED") == "1"
 is_keeper = db.is_keeper  # who may keep the ledger; see NOTEBOOK_KEEPERS
 
 
-def bet_trouble(claim, category, horizon, keeping=None):
+def bet_trouble(claim, subjects, horizon, keeping=None):
     """What is wrong with a bet as written, or None if it will do.
 
     `keeping` is the horizon a bet already carries: a year that has since
@@ -60,8 +60,11 @@ def bet_trouble(claim, category, horizon, keeping=None):
         return "A bet needs to be a whole claim."
     if len(claim) > MAX_CLAIM:
         return "A claim wants %d characters at most." % MAX_CLAIM
-    if category not in db.CATEGORIES:
+    if not subjects:
         return "Pick a subject."
+    if len(subjects) > db.MAX_SUBJECTS:
+        return ("A bet may sit under %d subjects at most - pick the ones it is really about."
+                % db.MAX_SUBJECTS)
     if not horizon.isdigit():
         return "The horizon must be a year between %d and %d." % (year, year + 75)
     if int(horizon) == keeping:
@@ -205,7 +208,15 @@ class Notebook(BaseHTTPRequestHandler):
         if length < 0 or length > MAX_BODY_BYTES:
             return None
         raw = self.rfile.read(length).decode("utf-8", "replace") if length else ""
-        return {k: v[0] for k, v in parse_qs(raw, keep_blank_values=True).items()}
+        posted = parse_qs(raw, keep_blank_values=True)
+        # A field ticked more than once (the subjects) needs all of its
+        # values; everything else wants the one.
+        self._posted = posted
+        return {k: v[0] for k, v in posted.items()}
+
+    def every(self, field):
+        """Every value posted under one name, in the order they arrived."""
+        return [v.strip() for v in getattr(self, "_posted", {}).get(field, []) if v.strip()]
 
     def cookie(self, name):
         raw = self.headers.get("Cookie")
@@ -489,7 +500,8 @@ class Notebook(BaseHTTPRequestHandler):
             lines += [
                 "[%d %s]  %s" % (b["votes"], "vote" if b["votes"] == 1 else "votes", b["claim"]),
                 "    %s | by %d | %s | %s"
-                % (b["category"], b["horizon"], db.byline(b), db.STATUSES[b["status"]]),
+                % (", ".join(db.subjects_on(b)), b["horizon"], db.byline(b),
+                   db.STATUSES[b["status"]]),
             ]
             if b["reasoning"].strip():
                 for para in b["reasoning"].strip().splitlines():
@@ -691,20 +703,20 @@ class Notebook(BaseHTTPRequestHandler):
 
         claim = form.get("claim", "").strip()
         reasoning = form.get("reasoning", "").strip()
-        category = form.get("category", "").strip()
+        subjects = db.clean_subjects(self.every("subject"))
         horizon = form.get("horizon", "").strip()
         values = {
             "claim": claim, "reasoning": reasoning,
-            "category": category, "horizon": horizon,
+            "subjects": subjects, "horizon": horizon,
         }
-        trouble = bet_trouble(claim, category, horizon, keeping=bet["horizon"])
+        trouble = bet_trouble(claim, subjects, horizon, keeping=bet["horizon"])
         if trouble:
             return self.reply(
                 render.revise_page(bet, user, self.csrf_token(), values, trouble), 400
             )
         db.revise_bet(
             conn, bet["id"], user["id"], claim, reasoning[:MAX_REASONING],
-            category, int(horizon),
+            subjects, int(horizon),
         )
         return self.go("/bet/%d" % bet["id"])
 
@@ -713,24 +725,24 @@ class Notebook(BaseHTTPRequestHandler):
             return self.go("/enter")
         claim = form.get("claim", "").strip()
         reasoning = form.get("reasoning", "").strip()
-        category = form.get("category", "").strip()
+        subjects = db.clean_subjects(self.every("subject"))
         horizon = form.get("horizon", "").strip()
         anonymous = bool(form.get("anonymous"))
         values = {
-            "claim": claim, "reasoning": reasoning, "category": category,
+            "claim": claim, "reasoning": reasoning, "subjects": subjects,
             "horizon": horizon, "anonymous": anonymous,
         }
         # Still their first: the rules stay up while they fix whatever
         # the notebook has just complained about.
         first = not db.has_written(conn, user["id"])
 
-        trouble = bet_trouble(claim, category, horizon)
+        trouble = bet_trouble(claim, subjects, horizon)
         if trouble:
             return self.reply(
                 render.propose_page(user, self.csrf_token(), values, trouble, first), 400
             )
         bet_id = db.create_bet(
-            conn, user["id"], claim, reasoning[:MAX_REASONING], category, int(horizon), anonymous
+            conn, user["id"], claim, reasoning[:MAX_REASONING], subjects, int(horizon), anonymous
         )
         db.toggle_vote(conn, bet_id, user["id"])  # you back your own bet
         return self.go("/bet/%d" % bet_id)
@@ -797,6 +809,17 @@ class Notebook(BaseHTTPRequestHandler):
 
 # --- example ledger -------------------------------------------------------
 
+# The examples that are really about two things, keyed by the opening of
+# the claim. A malpractice claim is health and law both, and filing it
+# under one of them loses whoever went looking under the other.
+ALSO_ABOUT = {
+    "By 2032, a candidate": ["information & trust"],
+    "By 2033, refusing": ["law & rights"],
+    "By 2029, data centre": ["politics & governance"],
+    "By 2029, 'wrote it myself'": ["art & culture"],
+    "By 2034, at least three": ["politics & governance"],
+}
+
 SEED = [
     ("information & trust", 2031, "By 2031, most people under thirty will assume a photograph or video is synthetic until something proves otherwise.",
      "Verification will move from the image to the chain of custody around it. I would count this settled if a major survey finds under half of that age group treat an unsourced image as evidence of anything."),
@@ -838,7 +861,11 @@ def seed(force=False):
 
     for i, (category, horizon, claim, reasoning) in enumerate(SEED):
         author = people[i % len(people)]
-        bet_id = db.create_bet(conn, author["id"], claim, reasoning, category, horizon, i % 7 == 3)
+        # Some of the examples genuinely sit at a crossroads, and the
+        # ledger is more honest for showing it.
+        also = next((v for k, v in ALSO_ABOUT.items() if claim.startswith(k)), [])
+        subjects = [category] + also
+        bet_id = db.create_bet(conn, author["id"], claim, reasoning, subjects, horizon, i % 7 == 3)
         for voter in people[: (i % 3) + 1]:
             db.toggle_vote(conn, bet_id, voter["id"])
     print("Wrote %d example bets by %d example hands." % (len(SEED), len(people)))

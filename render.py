@@ -33,6 +33,46 @@ def csrf_field(csrf):
     return '<input type="hidden" name="csrf" value="%s">' % e(csrf)
 
 
+def subject_boxes(chosen):
+    """The twelve subjects, to tick. A bet is usually one thing, but some
+    genuinely sit at a crossroads - so up to db.MAX_SUBJECTS of them."""
+    chosen = set(chosen or [])
+    boxes = "".join(
+        '<label class="tick"><input type="checkbox" name="subject" value="%s"%s> %s</label>'
+        % (e(c), " checked" if c in chosen else "", e(c))
+        for c in db.CATEGORIES
+    )
+    return """<div class="field">
+    <span class="name">Subject</span>
+    <p class="hint">What it is about. Up to %d of them, if it really sits at a
+       crossroads &mdash; the first one down this list is the one it is filed
+       under.</p>
+    <div class="subjects">%s</div>
+  </div>""" % (db.MAX_SUBJECTS, boxes)
+
+
+def subject_line(bet):
+    """Every subject a bet carries, for a meta line."""
+    return " &middot; ".join(e(s) for s in db.subjects_on(bet))
+
+
+def subjects_anywhere(row):
+    """The subjects on either a bet as it stands or an earlier wording of
+    one - the two keep them differently."""
+    try:
+        joined = row["subjects"]
+    except (IndexError, KeyError):
+        return db.subjects_on(row)
+    # Rows written before a bet could carry more than one have the column
+    # empty, and only their single category to go on.
+    return [s for s in (joined or "").split("|") if s] or [row["category"]]
+
+
+def subject_line_was(was):
+    """The same for an earlier wording, which keeps its own list."""
+    return " &middot; ".join(e(s) for s in subjects_anywhere(was))
+
+
 def qs(**parts):
     clean = {k: v for k, v in parts.items() if v not in (None, "", 0)}
     return ("?" + urlencode(clean)) if clean else ""
@@ -174,7 +214,7 @@ def entry(bet, user, csrf, with_reasoning=True):
         "id": bet["id"],
         "claim": e(bet["claim"]),
         "stamp": status_stamp(bet),
-        "cat": e(bet["category"]),
+        "cat": subject_line(bet),
         "year": bet["horizon"],
         "who": e(db.byline(bet)),
         "when": date_of(bet["created_at"]),
@@ -281,13 +321,9 @@ def revise_page(bet, user, csrf, values=None, error=""):
     wording stays on the page, because that is the whole bargain."""
     values = values or {
         "claim": bet["claim"], "reasoning": bet["reasoning"],
-        "category": bet["category"], "horizon": bet["horizon"],
+        "subjects": db.subjects_on(bet), "horizon": bet["horizon"],
     }
     year = db.now().year
-    options = "".join(
-        '<option%s>%s</option>' % (" selected" if values.get("category") == c else "", e(c))
-        for c in db.CATEGORIES
-    )
     note = '<div class="notice">%s</div>' % e(error) if error else ""
     # A horizon already gone by may stand, but cannot be picked afresh.
     low = min(year, bet["horizon"])
@@ -302,8 +338,7 @@ def revise_page(bet, user, csrf, values=None, error=""):
     <input type="text" name="claim" maxlength="240" required value="%(claim)s"></label>
   <label class="field"><span class="name">Why you think so</span>
     <textarea name="reasoning" maxlength="4000">%(reasoning)s</textarea></label>
-  <label class="field"><span class="name">Subject</span>
-    <select name="category">%(options)s</select></label>
+  %(subjects)s
   <label class="field"><span class="name">Judged by the year</span>
     <input type="number" name="horizon" min="%(min)d" max="%(max)d" value="%(horizon)s" required></label>
   <div class="deeds">
@@ -316,7 +351,7 @@ def revise_page(bet, user, csrf, values=None, error=""):
         "csrf": csrf_field(csrf),
         "claim": e(values.get("claim", "")),
         "reasoning": e(values.get("reasoning", "")),
-        "options": options,
+        "subjects": subject_boxes(values.get("subjects")),
         "min": low,
         "max": year + 75,
         "horizon": e(values.get("horizon", bet["horizon"])),
@@ -336,9 +371,14 @@ def earlier_wording(bet, earlier):
     def changed_between(before, after):
         names = []
         for field, name in (("claim", "the claim"), ("reasoning", "the reasoning"),
-                            ("category", "the subject"), ("horizon", "the horizon")):
+                            ("horizon", "the horizon")):
             if before[field] != after[field]:
                 names.append(name)
+        # An earlier wording keeps its own list of subjects; the bet as it
+        # stands carries them on the row from BET_SELECT.
+        had, has = subjects_anywhere(before), subjects_anywhere(after)
+        if had != has:
+            names.append("the subject" if len(had) == len(has) == 1 else "the subjects")
         if not names:
             return "something"
         if len(names) == 1:
@@ -358,7 +398,7 @@ def earlier_wording(bet, earlier):
                 "what": e(changed_between(was, after).capitalize()),
                 "when": date_of(was["replaced_at"]),
                 "claim": e(was["claim"]),
-                "cat": e(was["category"]),
+                "cat": subject_line_was(was),
                 "year": was["horizon"],
                 "because": '<p class="because">%s</p>' % e(was["reasoning"].strip())
                            if was["reasoning"].strip() else "",
@@ -439,7 +479,7 @@ def bet_page(bet, user, csrf, note="", earlier=()):
         "note": note,
         "claim": e(bet["claim"]),
         "stamp": status_stamp(bet),
-        "cat": e(bet["category"]),
+        "cat": subject_line(bet),
         "year": bet["horizon"],
         "who": e(db.byline(bet)),
         "when": date_of(bet["created_at"]),
@@ -499,10 +539,6 @@ FIRST_TIME_RULES = """<div class="notice plain first-time">
 def propose_page(user, csrf, values=None, error="", first_time=False):
     values = values or {}
     year = db.now().year
-    options = "".join(
-        '<option%s>%s</option>' % (" selected" if values.get("category") == c else "", e(c))
-        for c in db.CATEGORIES
-    )
     note = '<div class="notice">%s</div>' % e(error) if error else ""
     lede = FIRST_TIME_RULES if first_time else """<p class="lede">State it so that in ten years a stranger could tell whether you were right.
    A bet is not a banner: what you expect, not what you want &mdash;
@@ -519,8 +555,7 @@ def propose_page(user, csrf, values=None, error="", first_time=False):
   <label class="field"><span class="name">Why you think so</span>
     <textarea name="reasoning" maxlength="4000"
               placeholder="The reasoning, the thing that would prove you wrong, what you would accept as settled.">%(reasoning)s</textarea></label>
-  <label class="field"><span class="name">Subject</span>
-    <select name="category">%(options)s</select></label>
+  %(subjects)s
   <label class="field"><span class="name">Judged by the year</span>
     <input type="number" name="horizon" min="%(min)d" max="%(max)d" value="%(horizon)s" required></label>
   <label class="tick"><input type="checkbox" name="anonymous" value="1"%(anon)s>
@@ -532,7 +567,7 @@ def propose_page(user, csrf, values=None, error="", first_time=False):
         "csrf": csrf_field(csrf),
         "claim": e(values.get("claim", "")),
         "reasoning": e(values.get("reasoning", "")),
-        "options": options,
+        "subjects": subject_boxes(values.get("subjects")),
         "min": year,
         "max": year + 75,
         "horizon": e(values.get("horizon", year + 5)),
@@ -591,7 +626,7 @@ def desk_page(user, csrf, mine, backed, note="", error=""):
                 r["id"],
                 e(r["claim"]),
                 status_stamp(r),
-                e(r["category"]),
+                subject_line(r),
                 r["horizon"],
             )
             for r in rows
@@ -700,7 +735,7 @@ def keep_page(user, csrf, counts, bets, hands, query="", note="", error=""):
                 "id": b["id"],
                 "claim": e(b["claim"]),
                 "mark": ' <span class="stamp">struck out</span>' if struck else status_stamp(b),
-                "cat": e(b["category"]),
+                "cat": subject_line(b),
                 "year": b["horizon"],
                 "who": e(db.byline(b)),
                 "when": date_of(b["created_at"]),
@@ -795,7 +830,7 @@ def burn_page(user, csrf, bet):
 </div>""" % {
         "id": bet["id"],
         "claim": e(bet["claim"]),
-        "cat": e(bet["category"]),
+        "cat": subject_line(bet),
         "year": bet["horizon"],
         "who": e(db.byline(bet)),
         "when": date_of(bet["created_at"]),
@@ -888,7 +923,7 @@ def print_page(bets, heading, subheading):
             "vote" if b["votes"] == 1 else "votes",
             e(b["claim"]),
             status_stamp(b),
-            e(b["category"]),
+            subject_line(b),
             b["horizon"],
             e(db.byline(b)),
             date_of(b["created_at"]),

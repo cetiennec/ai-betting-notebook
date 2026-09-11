@@ -104,6 +104,19 @@ CREATE TABLE IF NOT EXISTS rate_limits (
     created_at TEXT NOT NULL
 );
 
+-- A bet may sit at a crossroads: "refusing an AI second opinion will be
+-- grounds for a malpractice claim" is health & medicine and law & rights
+-- both. bets.category holds the first subject - it is what the bet is
+-- mostly about - and this table holds the one or two after it. Reading
+-- them apart keeps every older query honest; anything that filters or
+-- counts by subject has to look in both.
+CREATE TABLE IF NOT EXISTS bet_subjects (
+    bet_id  INTEGER NOT NULL REFERENCES bets(id) ON DELETE CASCADE,
+    subject TEXT NOT NULL,
+    place   INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (bet_id, subject)
+);
+
 -- What a bet said before somebody changed it. One row per edit, holding
 -- the wording it is replacing, so the whole history of a claim can be
 -- read back. Nothing here is ever updated or deleted: a notebook whose
@@ -114,6 +127,7 @@ CREATE TABLE IF NOT EXISTS bet_revisions (
     claim      TEXT NOT NULL,
     reasoning  TEXT NOT NULL DEFAULT '',
     category   TEXT NOT NULL,
+    subjects   TEXT NOT NULL DEFAULT '',   -- every subject it carried, '|' apart
     horizon    INTEGER NOT NULL,
     replaced_at TEXT NOT NULL
 );
@@ -121,7 +135,10 @@ CREATE TABLE IF NOT EXISTS bet_revisions (
 CREATE INDEX IF NOT EXISTS idx_bets_category ON bets(category);
 CREATE INDEX IF NOT EXISTS idx_rate_limits_bucket ON rate_limits(bucket);
 CREATE INDEX IF NOT EXISTS idx_revisions_bet ON bet_revisions(bet_id);
+CREATE INDEX IF NOT EXISTS idx_bet_subjects ON bet_subjects(subject);
 """
+
+MAX_SUBJECTS = 3
 
 # Split out from SCHEMA: these name columns (anon_id) that only exist on
 # votes once _migrate() has run, so they must be created after migration.
@@ -182,6 +199,13 @@ def _migrate(conn):
         with conn:
             conn.execute("ALTER TABLE bets ADD COLUMN removed_at TEXT")
             conn.execute("ALTER TABLE bets ADD COLUMN removed_why TEXT NOT NULL DEFAULT ''")
+
+    revision_cols = [row[1] for row in conn.execute("PRAGMA table_info(bet_revisions)").fetchall()]
+    if revision_cols and "subjects" not in revision_cols:
+        with conn:
+            conn.execute(
+                "ALTER TABLE bet_revisions ADD COLUMN subjects TEXT NOT NULL DEFAULT ''"
+            )
 
     cols = [row[1] for row in conn.execute("PRAGMA table_info(votes)").fetchall()]
     if cols and "anon_id" not in cols:
@@ -331,6 +355,9 @@ BET_SELECT = """
 SELECT b.*,
        u.pseudo AS author_pseudo,
        u.show_pseudo AS author_show_pseudo,
+       (SELECT group_concat(subject, '|') FROM
+          (SELECT subject FROM bet_subjects WHERE bet_id = b.id ORDER BY place, subject)
+       ) AS extra_subjects,
        (SELECT COUNT(*) FROM bet_revisions r WHERE r.bet_id = b.id) AS revisions,
        (SELECT COUNT(*) FROM votes v WHERE v.bet_id = b.id) AS votes,
        (SELECT COUNT(*) FROM votes v WHERE v.bet_id = b.id
@@ -359,8 +386,13 @@ def list_bets(conn, viewer_id=0, query="", category="", status="", sort="interes
         like = "%%%s%%" % query
         args += [like, like, like]
     if category:
-        where.append("b.category = ?")
-        args.append(category)
+        # A bet is in a subject whether it is the main one or one of the
+        # two that may sit beside it.
+        where.append(
+            "(b.category = ? OR EXISTS (SELECT 1 FROM bet_subjects s"
+            "  WHERE s.bet_id = b.id AND s.subject = ?))"
+        )
+        args += [category, category]
     if status:
         where.append("b.status = ?")
         args.append(status)
@@ -377,13 +409,18 @@ def get_bet(conn, bet_id, viewer_id=0, viewer_anon="", struck=False):
     return conn.execute(sql, (viewer_id or 0, viewer_anon or "", bet_id)).fetchone()
 
 
-def create_bet(conn, user_id, claim, reasoning, category, horizon, anonymous):
+def create_bet(conn, user_id, claim, reasoning, subjects, horizon, anonymous):
+    """`subjects` is one to MAX_SUBJECTS of them; the first is the main one."""
+    subjects = clean_subjects(
+        subjects if isinstance(subjects, (list, tuple)) else [subjects]
+    )[:MAX_SUBJECTS]   # the form refuses more; this is the last line of defence
     with conn:
         cur = conn.execute(
             """INSERT INTO bets (user_id, claim, reasoning, category, horizon, anonymous, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (user_id, claim, reasoning, category, horizon, 1 if anonymous else 0, stamp()),
+            (user_id, claim, reasoning, subjects[0], horizon, 1 if anonymous else 0, stamp()),
         )
+    set_subjects(conn, cur.lastrowid, subjects)
     return cur.lastrowid
 
 
@@ -396,7 +433,51 @@ def has_written(conn, user_id):
     return row is not None
 
 
-def revise_bet(conn, bet_id, user_id, claim, reasoning, category, horizon):
+def clean_subjects(wanted):
+    """Known subjects, no repeats, in the order they were given.
+
+    Deliberately does not cap the count: too many is something to refuse
+    and say so, not to silently trim - a notebook that quietly throws
+    away the fourth thing you ticked has chosen for you."""
+    kept = []
+    for subject in wanted:
+        subject = (subject or "").strip()
+        if subject in CATEGORIES and subject not in kept:
+            kept.append(subject)
+    return kept
+
+
+def set_subjects(conn, bet_id, subjects):
+    """The first subject lives on the bet; the rest live beside it."""
+    with conn:
+        conn.execute("DELETE FROM bet_subjects WHERE bet_id = ?", (bet_id,))
+        if subjects:
+            conn.execute("UPDATE bets SET category = ? WHERE id = ?", (subjects[0], bet_id))
+        for place, subject in enumerate(subjects[1:], start=1):
+            conn.execute(
+                "INSERT INTO bet_subjects (bet_id, subject, place) VALUES (?, ?, ?)",
+                (bet_id, subject, place),
+            )
+
+
+def subjects_of(conn, bet_id):
+    """Every subject a bet carries, the main one first."""
+    row = conn.execute("SELECT category FROM bets WHERE id = ?", (bet_id,)).fetchone()
+    if row is None:
+        return []
+    rest = conn.execute(
+        "SELECT subject FROM bet_subjects WHERE bet_id = ? ORDER BY place, subject", (bet_id,)
+    ).fetchall()
+    return [row["category"]] + [r["subject"] for r in rest]
+
+
+def subjects_on(bet):
+    """The same, read off a row from BET_SELECT without asking again."""
+    rest = (bet["extra_subjects"] or "").split("|") if bet["extra_subjects"] else []
+    return [bet["category"]] + [s for s in rest if s]
+
+
+def revise_bet(conn, bet_id, user_id, claim, reasoning, subjects, horizon):
     """Change a bet, keeping what it said before.
 
     The old wording is copied into bet_revisions first, so the page can
@@ -407,21 +488,30 @@ def revise_bet(conn, bet_id, user_id, claim, reasoning, category, horizon):
     ).fetchone()
     if was is None:
         return False
-    if (was["claim"], was["reasoning"], was["category"], was["horizon"]) == (
-        claim, reasoning, category, horizon
+    subjects = clean_subjects(
+        subjects if isinstance(subjects, (list, tuple)) else [subjects]
+    )[:MAX_SUBJECTS]   # the form refuses more; this is the last line of defence
+    if not subjects:
+        return False
+    had = subjects_of(conn, bet_id)
+    if (was["claim"], was["reasoning"], had, was["horizon"]) == (
+        claim, reasoning, subjects, horizon
     ):
         return False
     with conn:
         conn.execute(
-            """INSERT INTO bet_revisions (bet_id, claim, reasoning, category, horizon, replaced_at)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (bet_id, was["claim"], was["reasoning"], was["category"], was["horizon"], stamp()),
+            """INSERT INTO bet_revisions
+                 (bet_id, claim, reasoning, category, subjects, horizon, replaced_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (bet_id, was["claim"], was["reasoning"], was["category"], "|".join(had),
+             was["horizon"], stamp()),
         )
         conn.execute(
-            """UPDATE bets SET claim = ?, reasoning = ?, category = ?, horizon = ?
+            """UPDATE bets SET claim = ?, reasoning = ?, horizon = ?
                WHERE id = ? AND user_id = ?""",
-            (claim, reasoning, category, horizon, bet_id, user_id),
+            (claim, reasoning, horizon, bet_id, user_id),
         )
+    set_subjects(conn, bet_id, subjects)
     return True
 
 
@@ -468,11 +558,17 @@ def toggle_vote(conn, bet_id, user_id=None, anon_id=None):
 
 
 def category_counts(conn):
+    """How many bets sit under each subject, counting a bet once for each
+    subject it carries."""
     rows = conn.execute(
-        """SELECT category, COUNT(*) AS n FROM bets WHERE removed_at IS NULL
-           GROUP BY category ORDER BY n DESC, category"""
+        """SELECT subject, COUNT(*) AS n FROM (
+               SELECT category AS subject FROM bets WHERE removed_at IS NULL
+               UNION ALL
+               SELECT s.subject FROM bet_subjects s JOIN bets b ON b.id = s.bet_id
+                WHERE b.removed_at IS NULL
+           ) GROUP BY subject ORDER BY n DESC, subject"""
     ).fetchall()
-    return [(r["category"], r["n"]) for r in rows]
+    return [(r["subject"], r["n"]) for r in rows]
 
 
 # --- the moderation desk --------------------------------------------------

@@ -43,7 +43,7 @@ python3 test_notebook.py                     # the tests; -v to name each one
 | **Mark** | one "interesting" mark per bet, toggleable; the ledger sorts by it. No account needed — a signed-in mark is tied to your user, an anonymous one to a browser cookie |
 | **Change** | the hand that wrote a bet can correct it while it is open, and every earlier wording stays on the page with the date it changed. A hand may correct itself, but not quietly |
 | **Settle** | the author records how it turned out, with a line on why. A settled bet is left as it was written |
-| **Subjects** | twelve categories, from education and work & economy to war & security and love & friendship |
+| **Subjects** | twelve of them, from education and work & economy to war & security and love & friendship. A bet may carry up to three: some genuinely sit at a crossroads, and filing a malpractice claim under *health & medicine* alone loses whoever went looking under *law & rights* |
 | **Search** | one box for words, a box beside it for the subject; both combine with standing and order |
 | **Sign in** | email only. A one-shot key, valid an hour, and a session that lasts ninety days |
 | **Pen name** | shown or hidden, as a standing preference at your desk or per bet. Your address is never shown either way |
@@ -94,7 +94,7 @@ is worse than removing it.
 
 ## Tests
 
-Sixty-nine of them, standard library only like the rest. Each starts a real
+Seventy-six of them, standard library only like the rest. Each starts a real
 notebook on a free port with its own throwaway ledger and talks to it over
 HTTP, so the socket and header layers are covered rather than mocked — several
 of the things they guard against only exist down there. They run on every

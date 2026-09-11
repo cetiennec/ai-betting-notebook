@@ -382,7 +382,7 @@ class TestChangingABet(FreshNotebookTestCase):
         reply = author.post("/propose", {
             "claim": claim or self.FIRST,
             "reasoning": "Because review is the bottleneck, not typing.",
-            "category": "work & economy",
+            "subject": "work & economy",
             "horizon": "2033",
         })
         self.assertEqual(reply.status, 303, reply.body[:400])
@@ -393,7 +393,7 @@ class TestChangingABet(FreshNotebookTestCase):
         reply = author.post(where + "/revise", {
             "claim": self.SECOND,
             "reasoning": "Because review is the bottleneck, not typing.",
-            "category": "work & economy",
+            "subject": "work & economy",
             "horizon": "2033",
         }, csrf_from=where + "/revise")
         self.assertEqual(reply.status, 303)
@@ -404,7 +404,7 @@ class TestChangingABet(FreshNotebookTestCase):
         author, where = self.a_bet()
         author.post(where + "/revise", {
             "claim": self.SECOND, "reasoning": "Because review is the bottleneck, not typing.",
-            "category": "work & economy", "horizon": "2033",
+            "subject": "work & economy", "horizon": "2033",
         }, csrf_from=where + "/revise")
 
         # to anybody, not only the author
@@ -418,7 +418,7 @@ class TestChangingABet(FreshNotebookTestCase):
         author, where = self.a_bet()
         author.post(where + "/revise", {
             "claim": self.FIRST, "reasoning": "Because review is the bottleneck, not typing.",
-            "category": "work & economy", "horizon": "2039",
+            "subject": "work & economy", "horizon": "2039",
         }, csrf_from=where + "/revise")
         page = self.notebook.visitor().get(where).body
         self.assertIn("The horizon changed", page)
@@ -429,7 +429,7 @@ class TestChangingABet(FreshNotebookTestCase):
         for claim in (self.SECOND, "By 2033, nearly all new code at large firms is machine-written."):
             author.post(where + "/revise", {
                 "claim": claim, "reasoning": "Because review is the bottleneck, not typing.",
-                "category": "work & economy", "horizon": "2033",
+                "subject": "work & economy", "horizon": "2033",
             }, csrf_from=where + "/revise")
         page = self.notebook.visitor().get(where).body
         self.assertIn("half of all new code in production", page)   # the first
@@ -440,7 +440,7 @@ class TestChangingABet(FreshNotebookTestCase):
         author, where = self.a_bet()
         author.post(where + "/revise", {
             "claim": self.FIRST, "reasoning": "Because review is the bottleneck, not typing.",
-            "category": "work & economy", "horizon": "2033",
+            "subject": "work & economy", "horizon": "2033",
         }, csrf_from=where + "/revise")
         self.assertNotIn("What it said before", self.notebook.visitor().get(where).body)
 
@@ -450,7 +450,7 @@ class TestChangingABet(FreshNotebookTestCase):
         self.assertEqual(stranger.get(where + "/revise").status, 403)
         refused = stranger.post(where + "/revise", {
             "claim": "By 2033, I get to put words in another hand's mouth.",
-            "reasoning": "", "category": "work & economy", "horizon": "2033",
+            "reasoning": "", "subject": "work & economy", "horizon": "2033",
         }, csrf_from="/")
         self.assertEqual(refused.status, 403)
         self.assertIn("half of all new code", self.notebook.visitor().get(where).body)
@@ -465,7 +465,7 @@ class TestChangingABet(FreshNotebookTestCase):
     def test_a_change_still_has_to_be_a_bet(self):
         author, where = self.a_bet()
         reply = author.post(where + "/revise", {
-            "claim": "too short", "reasoning": "", "category": "work & economy",
+            "claim": "too short", "reasoning": "", "subject": "work & economy",
             "horizon": "2033",
         }, csrf_from=where + "/revise")
         self.assertEqual(reply.status, 400)
@@ -479,9 +479,87 @@ class TestChangingABet(FreshNotebookTestCase):
         year = re.search(r'name="horizon"[^>]*value="(\d+)"', page).group(1)
         reply = author.post(where + "/revise", {
             "claim": "By 2027, this bet will have had its typo fixed.",
-            "reasoning": "", "category": "work & economy", "horizon": year,
+            "reasoning": "", "subject": "work & economy", "horizon": year,
         }, csrf_from=where + "/revise")
         self.assertEqual(reply.status, 303)
+
+
+class TestSubjects(FreshNotebookTestCase):
+    """A bet may sit at a crossroads: filing it under one subject loses
+    whoever went looking under the other."""
+
+    def a_bet(self, subjects):
+        author = self.signed_in("crossroads@example.org")
+        fields = [
+            ("claim", "By 2036, a bet will be filed under more than one subject."),
+            ("reasoning", "Because some of them genuinely are two things."),
+            ("horizon", "2036"),
+        ] + [("subject", s) for s in subjects]
+        page = author.get("/propose")
+        fields.append(("csrf", token_on(page.body)))
+        body = urllib.parse.urlencode(fields).encode()
+        reply = author._open(urllib.request.Request(self.notebook.base + "/propose", data=body))
+        return author, reply
+
+    def test_a_bet_can_carry_three_subjects(self):
+        author, reply = self.a_bet(["law & rights", "politics & governance", "work & economy"])
+        self.assertEqual(reply.status, 303, reply.body[:400])
+        page = self.notebook.visitor().get(reply.headers["Location"]).body
+        for subject in ("law &amp; rights", "politics &amp; governance", "work &amp; economy"):
+            self.assertIn(subject, page)
+
+    def test_a_fourth_subject_is_refused(self):
+        _, reply = self.a_bet([
+            "law & rights", "politics & governance", "work & economy", "education",
+        ])
+        self.assertEqual(reply.status, 400)
+        self.assertIn("subjects at most", reply.body)
+
+    def test_no_subject_at_all_is_refused(self):
+        _, reply = self.a_bet([])
+        self.assertEqual(reply.status, 400)
+        self.assertIn("Pick a subject", reply.body)
+
+    def test_an_invented_subject_is_ignored(self):
+        _, reply = self.a_bet(["education", "something invented"])
+        self.assertEqual(reply.status, 303)
+        page = self.notebook.visitor().get(reply.headers["Location"]).body
+        self.assertNotIn("something invented", page)
+
+    def test_a_bet_is_found_under_every_subject_it_carries(self):
+        author, reply = self.a_bet(["law & rights", "work & economy"])
+        where = reply.headers["Location"]
+        visitor = self.notebook.visitor()
+        for subject in ("law & rights", "work & economy"):
+            found = visitor.get("/?category=%s" % urllib.parse.quote(subject)).body
+            self.assertIn(where, found, "not filed under %s" % subject)
+
+    def test_the_seeded_crossroads_are_filed_under_both(self):
+        """The example about a malpractice claim is health and law both."""
+        visitor = self.notebook.visitor()
+        under_law = visitor.get("/?category=%s" % urllib.parse.quote("law & rights")).body
+        self.assertIn("malpractice claim", under_law)
+        under_health = visitor.get("/?category=%s" % urllib.parse.quote("health & medicine")).body
+        self.assertIn("malpractice claim", under_health)
+
+    def test_changing_the_subjects_is_kept_in_the_history(self):
+        author, reply = self.a_bet(["education"])
+        where = reply.headers["Location"]
+        fields = [
+            ("claim", "By 2036, a bet will be filed under more than one subject."),
+            ("reasoning", "Because some of them genuinely are two things."),
+            ("horizon", "2036"),
+            ("subject", "education"), ("subject", "art & culture"),
+        ]
+        page = author.get(where + "/revise")
+        fields.append(("csrf", token_on(page.body)))
+        author._open(urllib.request.Request(
+            self.notebook.base + where + "/revise",
+            data=urllib.parse.urlencode(fields).encode(),
+        ))
+        after = self.notebook.visitor().get(where).body
+        self.assertIn("art &amp; culture", after)
+        self.assertIn("The subjects changed", after)
 
 
 class TestProposing(NotebookTestCase):
@@ -497,7 +575,7 @@ class TestProposing(NotebookTestCase):
         reply = visitor.post("/propose", {
             "claim": "By 2033 this test will still be passing, or the notebook has changed.",
             "reasoning": "Because it is written down.",
-            "category": "science & technology",
+            "subject": "science & technology",
             "horizon": "2033",
         })
         self.assertEqual(reply.status, 303)
@@ -513,7 +591,7 @@ class TestProposing(NotebookTestCase):
         visitor.post("/propose", {
             "claim": "By 2034 a newcomer will have been told the rules exactly once.",
             "reasoning": "Because that is what this test is for.",
-            "category": "everyday life",
+            "subject": "everyday life",
             "horizon": "2034",
         })
         self.assertNotIn("the house in short", visitor.get("/propose").body)
@@ -523,7 +601,7 @@ class TestProposing(NotebookTestCase):
         reply = visitor.post("/propose", {
             "claim": "too short",
             "reasoning": "",
-            "category": "education",
+            "subject": "education",
             "horizon": "2033",
         })
         self.assertEqual(reply.status, 400)
@@ -534,7 +612,7 @@ class TestProposing(NotebookTestCase):
         reply = visitor.post("/propose", {
             "claim": "x" * 5000,
             "reasoning": "",
-            "category": "education",
+            "subject": "education",
             "horizon": "2033",
         })
         self.assertEqual(reply.status, 400)
@@ -544,7 +622,7 @@ class TestProposing(NotebookTestCase):
         reply = visitor.post("/propose", {
             "claim": "A claim long enough to count as a whole one.",
             "reasoning": "",
-            "category": "something invented",
+            "subject": "something invented",
             "horizon": "2033",
         })
         self.assertEqual(reply.status, 400)
@@ -554,7 +632,7 @@ class TestProposing(NotebookTestCase):
         reply = author.post("/propose", {
             "claim": "By 2034 somebody will try to settle a bet that is not theirs.",
             "reasoning": "",
-            "category": "law & rights",
+            "subject": "law & rights",
             "horizon": "2034",
         })
         where = reply.headers["Location"]
@@ -571,7 +649,7 @@ class TestProposing(NotebookTestCase):
         reply = visitor.post("/propose", {
             "claim": "A claim long enough to count as a whole one.",
             "reasoning": "",
-            "category": "education",
+            "subject": "education",
             "horizon": "1999",
         })
         self.assertEqual(reply.status, 400)
@@ -892,7 +970,7 @@ class TestKeepingTheLedger(FreshNotebookTestCase):
         keeper = self.keeper()
         keeper.post("/propose", {
             "claim": "By 2035 the keeper will still be keeping this ledger.",
-            "reasoning": "", "category": "everyday life", "horizon": "2035",
+            "reasoning": "", "subject": "everyday life", "horizon": "2035",
         })
         page = keeper.get("/keep").body
         rows = re.findall(r'name="hand" value="(\d+)"', page)

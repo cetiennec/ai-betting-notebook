@@ -210,6 +210,25 @@ label.field .name {
 }
 label.tick { display: block; margin: 0.8rem 0; }
 
+/* Twelve subjects to tick, in columns so they read as a list rather
+   than a wall. */
+.subjects {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: 0.1rem 1.2rem;
+  margin-top: 0.3rem;
+}
+.subjects label.tick { margin: 0.22rem 0; font-size: 0.95rem; }
+.subjects input { margin-right: 0.35rem; }
+div.field { margin: 1.1rem 0 0; }
+div.field .name {
+  display: block;
+  font-variant: small-caps;
+  letter-spacing: 0.07em;
+  margin-bottom: 0.25rem;
+}
+div.field .hint { margin: 0 0 0.2rem; }
+
 input[type=text], input[type=email], input[type=search], input[type=number],
 select, textarea {
   width: 100%;
