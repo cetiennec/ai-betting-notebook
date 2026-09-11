@@ -142,6 +142,24 @@ def connect():
     return conn
 
 
+def backup_to(path):
+    """Copy the whole ledger to `path`, safely while it is being written to.
+
+    Not `cp`: a SQLite file copied mid-write is a file with half a
+    transaction in it. The backup API takes a consistent picture of a live
+    database, which is the only kind worth keeping."""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    source = connect()
+    copy = sqlite3.connect(path)
+    try:
+        with copy:
+            source.backup(copy)
+    finally:
+        copy.close()
+        source.close()
+    return path
+
+
 def _migrate(conn):
     """One-off shims for databases created before a schema change."""
     bet_cols = [row[1] for row in conn.execute("PRAGMA table_info(bets)").fetchall()]

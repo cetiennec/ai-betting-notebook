@@ -106,8 +106,12 @@ and the printing room; `/sitemap.xml` lists the ledger, the house rules and
 every entry that has not been struck. The mark in the browser tab lives at
 `static/notebook.svg`.
 
-Still missing here: an `og:image`, so a pasted link is words on a plain card
-rather than a picture.
+The card a link shows is `static/card.png`, drawn from `static/card.svg`; if
+you change the wording, redraw it with any SVG renderer:
+
+```sh
+rsvg-convert -w 1200 -h 630 -o static/card.png static/card.svg
+```
 
 ## Sending mail for real
 
@@ -122,7 +126,24 @@ python3 app.py send-letters
 ```
 
 The yearly letters are not on a timer. Run `send-letters` from cron once a day;
-it only writes to people whose twelve months are up.
+it only writes to people whose twelve months are up. In this repository that
+cron is `.github/workflows/letters.yml`, which knocks at the front door to wake
+the machine (it stops when nobody is reading) and then runs the command over
+`flyctl ssh`.
+
+## Keeping a copy
+
+One machine, one volume, one SQLite file, so a copy lives somewhere else:
+
+```sh
+python3 app.py backup                       # data/backups/notebook-<when>.sqlite3
+python3 app.py backup --to /somewhere/else.sqlite3
+```
+
+It uses SQLite's own backup, not `cp` — a database copied while it is being
+written to is a file with half a transaction in it. `.github/workflows/backup.yml`
+runs it nightly on Fly, fetches the file, checks it opens and passes
+`PRAGMA integrity_check`, and keeps it as a build artifact for ninety days.
 
 ## Before this is more than a prototype
 

@@ -43,30 +43,40 @@ def date_of(value):
     return stamp.strftime("%d %B %Y") if stamp else ""
 
 
-def social_head(title, description, path="/"):
-    """The handful of tags that decide what a pasted link looks like."""
-    url = SITE_URL + path
+def social_head(title, description, path=""):
+    """The handful of tags that decide what a pasted link looks like.
+
+    `path` is the page's own address, and only a page worth arriving at
+    from outside has one: a desk or a printing room says nothing, rather
+    than claiming to be the front door."""
+    url = SITE_URL + (path or "/")
     # A preview shows the title alone, with no masthead under it, so the
     # name of the place has to travel with the name of the page.
     shown = "%s \u00b7 %s" % (title, SITE_NAME)
+    where = ('<link rel="canonical" href="%s">\n<meta property="og:url" content="%s">\n'
+             % (e(url), e(url))) if path else ""
     return """<meta name="description" content="%(desc)s">
-<link rel="canonical" href="%(url)s">
-<meta property="og:site_name" content="%(site)s">
+%(where)s<meta property="og:site_name" content="%(site)s">
 <meta property="og:type" content="website">
 <meta property="og:title" content="%(title)s">
 <meta property="og:description" content="%(desc)s">
-<meta property="og:url" content="%(url)s">
-<meta name="twitter:card" content="summary">
+<meta property="og:image" content="%(card)s">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="A ruled cream page: The Future with AI, a betting notebook">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="%(card)s">
 <meta name="twitter:title" content="%(title)s">
 <meta name="twitter:description" content="%(desc)s">""" % {
         "title": e(shown),
         "desc": e(description),
-        "url": e(url),
+        "where": where,
         "site": e(SITE_NAME),
+        "card": e(SITE_URL + "/static/card.png"),
     }
 
 
-def layout(title, body, user=None, wide_footer=True, description="", path="/"):
+def layout(title, body, user=None, wide_footer=True, description="", path=""):
     if user:
         who = 'signed as <b>%s</b>' % e(user["pseudo"])
         room = (
@@ -746,7 +756,10 @@ def house_page(user=None):
   <a class="button" href="/">Back to the ledger</a>
   <a class="button" href="/propose">Propose a bet</a>
 </div>"""
-    return layout("The house rules", body, user)
+    return layout("The house rules", body, user, path="/house",
+                  description="What the notebook is for, in plain words: a bet is what "
+                              "you expect and not what you want, and the house takes no "
+                              "side on whether any future here is a good one.")
 
 
 def print_page(bets, heading, subheading):

@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <rect width="1200" height="630" fill="#fbf9f4"/>
+  <rect x="0" y="0" width="1200" height="630" fill="none" stroke="#e9e3d6" stroke-width="24"/>
+  <!-- ruled paper -->
+  <g stroke="#d8cfba" stroke-width="2">
+    <line x1="120" y1="150" x2="1080" y2="150"/>
+    <line x1="120" y1="330" x2="1080" y2="330"/>
+    <line x1="120" y1="404" x2="1080" y2="404"/>
+    <line x1="120" y1="478" x2="1080" y2="478"/>
+    <line x1="120" y1="552" x2="1080" y2="552"/>
+  </g>
+  <line x1="168" y1="60" x2="168" y2="570" stroke="#e0bdb4" stroke-width="3"/>
+
+  <text x="200" y="132" font-family="Palatino, Georgia, serif" font-size="34"
+        fill="#726a5e" letter-spacing="6">A BETTING NOTEBOOK</text>
+
+  <text x="200" y="255" font-family="Palatino, Georgia, serif" font-size="96"
+        fill="#2a2724">The Future with AI</text>
+
+  <text x="200" y="385" font-family="Palatino, Georgia, serif" font-size="40"
+        font-style="italic" fill="#2a2724">Take your bet on what you think the future</text>
+  <text x="200" y="459" font-family="Palatino, Georgia, serif" font-size="40"
+        font-style="italic" fill="#2a2724">with AI will look like; get reminded in a few</text>
+  <text x="200" y="533" font-family="Palatino, Georgia, serif" font-size="40"
+        font-style="italic" fill="#2a2724">years to observe what happened.</text>
+
+  <path d="M96 300 l26 30 l50 -60" fill="none" stroke="#93301f" stroke-width="14"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

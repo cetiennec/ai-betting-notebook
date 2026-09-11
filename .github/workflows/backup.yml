@@ -1,0 +1,55 @@
+# One machine, one volume, one SQLite file. This takes a consistent copy
+# of the ledger off Fly every night and keeps it as a build artifact, so
+# a lost volume is a bad day rather than the end of the notebook.
+name: Keep a copy of the ledger
+
+on:
+  schedule:
+    - cron: "41 3 * * *"
+  workflow_dispatch:
+
+concurrency: fly-ssh
+
+jobs:
+  backup:
+    name: Take a copy
+    runs-on: ubuntu-latest
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      FLY_APP: future-with-ai-notebook
+    steps:
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Knock
+        run: |
+          curl -fsS --retry 5 --retry-all-errors --max-time 60 \
+            "https://$FLY_APP.fly.dev/" > /dev/null
+          sleep 5
+
+      # sqlite3's own backup, not cp: a database copied mid-write is a
+      # file with half a transaction in it.
+      - name: Copy it on the machine
+        run: |
+          flyctl ssh console -a "$FLY_APP" \
+            -C "python3 /app/app.py backup --to /app/data/backups/latest.sqlite3"
+
+      - name: Fetch it here
+        run: |
+          flyctl ssh sftp get /app/data/backups/latest.sqlite3 ledger.sqlite3 -a "$FLY_APP"
+          test -s ledger.sqlite3
+          python3 - <<'PY'
+          import sqlite3
+          conn = sqlite3.connect("ledger.sqlite3")
+          bets = conn.execute("SELECT COUNT(*) FROM bets").fetchone()[0]
+          users = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+          assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok", "the copy is damaged"
+          print("%d bets by %d hands, and the file checks out" % (bets, users))
+          PY
+          gzip -9 ledger.sqlite3
+
+      - name: Keep it
+        uses: actions/upload-artifact@v4
+        with:
+          name: ledger-${{ github.run_id }}
+          path: ledger.sqlite3.gz
+          retention-days: 90

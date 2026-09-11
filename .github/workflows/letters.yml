@@ -1,0 +1,32 @@
+# The yearly letters are not on a timer inside the notebook: send-letters
+# writes to whoever's twelve months are up and nobody else, so it is safe
+# to run every day and does nothing on most of them.
+name: Post the letters that are due
+
+on:
+  schedule:
+    - cron: "17 7 * * *"   # a little after seven, every morning
+  workflow_dispatch:        # or whenever somebody asks
+
+concurrency: fly-ssh        # one errand on the machine at a time
+
+jobs:
+  letters:
+    name: send-letters
+    runs-on: ubuntu-latest
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      FLY_APP: future-with-ai-notebook
+    steps:
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      # The machine stops when nobody is reading, and ssh will not wake it.
+      # A knock at the front door will: auto_start_machines is on.
+      - name: Knock
+        run: |
+          curl -fsS --retry 5 --retry-all-errors --max-time 60 \
+            "https://$FLY_APP.fly.dev/" > /dev/null
+          sleep 5
+
+      - name: Post them
+        run: flyctl ssh console -a "$FLY_APP" -C "python3 /app/app.py send-letters"

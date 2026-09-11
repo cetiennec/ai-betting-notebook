@@ -808,15 +808,23 @@ def serve(port):
 def main():
     parser = argparse.ArgumentParser(description="The Future with AI betting notebook")
     parser.add_argument("command", nargs="?", default="serve",
-                        choices=["serve", "seed", "send-letters"])
+                        choices=["serve", "seed", "send-letters", "backup"])
     parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", 8420)))
     parser.add_argument("--force", action="store_true",
                         help="seed even if the ledger is full; send letters even if not due")
     parser.add_argument("--email", help="send the yearly letter to one address only")
+    parser.add_argument("--to", help="where a backup should be written")
     args = parser.parse_args()
 
     if args.command == "seed":
         return seed(args.force)
+    if args.command == "backup":
+        where = args.to or os.path.join(
+            db.DATA_DIR, "backups", "notebook-%s.sqlite3" % db.now().strftime("%Y%m%d-%H%M%S")
+        )
+        db.backup_to(where)
+        print("%s (%d bytes)" % (where, os.path.getsize(where)))
+        return None
     if args.command == "send-letters":
         conn = db.init()
         n = mail.send_yearly(conn, BASE_URL, force=args.force, only_email=args.email)

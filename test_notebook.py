@@ -639,7 +639,8 @@ class TestBroadcasting(NotebookTestCase):
         body = self.notebook.visitor().get("/").body
         self.assertIn('<meta name="description"', body)
         self.assertIn('property="og:title"', body)
-        self.assertIn('<meta name="twitter:card" content="summary">', body)
+        self.assertIn('<meta name="twitter:card" content="summary_large_image">', body)
+        self.assertIn('/static/card.png', body)
 
     def test_a_pasted_bet_says_what_the_bet_is(self):
         page = self.notebook.visitor().get("/bet/1")
@@ -649,6 +650,16 @@ class TestBroadcasting(NotebookTestCase):
         self.assertIn("The Future with AI", og)
         canonical = re.search(r'<link rel="canonical" href="([^"]+)"', page.body).group(1)
         self.assertEqual(canonical, "%s/bet/1" % self.notebook.base)
+
+    def test_a_page_nobody_should_arrive_at_claims_no_address(self):
+        # A canonical link on the sign-in form would tell a crawler the
+        # front door lives there. It says nothing instead.
+        self.assertNotIn("canonical", self.notebook.visitor().get("/enter").body)
+
+    def test_the_card_is_served_as_a_picture(self):
+        reply = self.notebook.visitor().get("/static/card.png")
+        self.assertEqual(reply.status, 200)
+        self.assertEqual(reply.headers["Content-Type"], "image/png")
 
     def test_there_is_a_mark_for_the_tab(self):
         reply = self.notebook.visitor().get("/static/notebook.svg")
