@@ -36,6 +36,9 @@ BASE_URL = os.environ.get("NOTEBOOK_URL", "http://localhost:8420")
 
 # Over https the cookies must not be allowed onto a plain connection.
 SECURE_COOKIES = BASE_URL.startswith("https://")
+# Set this only when a proxy you trust is in front and rewrites the
+# forwarding header itself. Fly is recognised without it.
+TRUST_FORWARDED = os.environ.get("NOTEBOOK_TRUST_FORWARDED") == "1"
 # Nobody needs to post more than a long bet; refuse the rest unread.
 MAX_BODY_BYTES = 64 * 1024
 MAX_CLAIM = 240
@@ -46,9 +49,17 @@ MAX_VERDICT = 2000
 # A path we are willing to copy into a Location header: no spaces, no
 # control characters, nothing but the ordinary furniture of a URL.
 SAFE_PATH = re.compile(r"^[A-Za-z0-9._~!$&'()*+,;=:@/?%-]*$")
+# The shape of a token we minted ourselves - secrets.token_urlsafe and
+# nothing else. A cookie that does not look like this was not ours.
+OUR_TOKEN = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
 
 
 def set_cookie(name, value, max_age):
+    # Whatever a caller believes, only our own alphabet reaches the header:
+    # a cookie read back from a visitor can carry quoted semicolons, and
+    # those would write extra attributes into the reply.
+    if value and not OUR_TOKEN.match(value):
+        raise ValueError("refusing to plant a cookie shaped like %r" % value[:40])
     bits = ["%s=%s" % (name, value), "Path=/", "HttpOnly", "SameSite=Lax", "Max-Age=%d" % max_age]
     if SECURE_COOKIES:
         bits.append("Secure")
@@ -161,14 +172,32 @@ class Notebook(BaseHTTPRequestHandler):
         return self.cookie(COOKIE)
 
     def anon_id(self):
-        """The visitor's anon-voter cookie, or "" if they don't have one yet."""
-        return self.cookie(ANON_COOKIE) or ""
+        """The visitor's anon-voter cookie, or "" if they haven't got one.
+
+        A cookie is whatever the visitor says it is, so anything that does
+        not look like a token we minted is treated as no token at all -
+        otherwise it lands in the ledger, and back in a reply header."""
+        token = self.cookie(ANON_COOKIE) or ""
+        return token if OUR_TOKEN.match(token) else ""
 
     def client_ip(self):
-        """The real visitor address, trusting X-Forwarded-For behind Fly's proxy."""
-        forwarded = self.headers.get("X-Forwarded-For")
-        if forwarded:
-            return forwarded.split(",")[0].strip()
+        """The visitor's address, for the purpose of rate limiting.
+
+        A forwarding header is written by whoever is talking to us, so it
+        is only worth anything when something trusted sits in front and
+        overwrites it. Fly does that with Fly-Client-IP. Behind any other
+        proxy, say so with NOTEBOOK_TRUST_FORWARDED=1 and the last hop of
+        X-Forwarded-For is used - the entry that proxy appended, not the
+        ones the visitor chose. With nothing in front, the only address
+        worth believing is the one the socket came from: believing a
+        header there would hand the rate limiter to the visitor."""
+        edge = self.headers.get("Fly-Client-IP")
+        if edge:
+            return edge.strip()
+        if TRUST_FORWARDED:
+            forwarded = self.headers.get("X-Forwarded-For")
+            if forwarded:
+                return forwarded.split(",")[-1].strip()
         return self.client_address[0]
 
     def csrf_token(self):

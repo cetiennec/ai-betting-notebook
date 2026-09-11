@@ -357,6 +357,23 @@ class TestProposing(NotebookTestCase):
         })
         self.assertEqual(reply.status, 400)
 
+    def test_only_the_hand_that_wrote_a_bet_may_settle_it(self):
+        author = self.signed_in("author@example.org")
+        reply = author.post("/propose", {
+            "claim": "By 2034 somebody will try to settle a bet that is not theirs.",
+            "reasoning": "",
+            "category": "law & rights",
+            "horizon": "2034",
+        })
+        where = reply.headers["Location"]
+
+        stranger = self.signed_in("stranger@example.org")
+        refused = stranger.post(where + "/resolve",
+                                {"status": "came_true", "verdict": "I say so."},
+                                csrf_from=where)
+        self.assertEqual(refused.status, 403)
+        self.assertIn("still open", author.get(where).body)
+
     def test_a_horizon_in_the_past_is_refused(self):
         visitor = self.signed_in("backwards@example.org")
         reply = visitor.post("/propose", {
@@ -418,6 +435,81 @@ class TestGuards(NotebookTestCase):
     def test_nothing_is_served_from_outside_the_static_room(self):
         for path in ("/static/../app.py", "/static/../../etc/passwd", "/static/%2e%2e/app.py"):
             self.assertEqual(self.notebook.visitor().get(path).status, 404, path)
+
+    def _vote_carrying(self, anon_cookie):
+        visitor = self.notebook.visitor()
+        page = visitor.get("/bet/1")
+        csrf = token_on(page.body)
+        jar = "; ".join("%s=%s" % (c.name, c.value) for c in visitor.jar)
+        body = urllib.parse.urlencode({"csrf": csrf})
+        return self.notebook.raw(
+            "POST /bet/1/vote HTTP/1.1\r\nHost: x\r\n"
+            "Cookie: %s; notebook_anon=%s\r\n"
+            "Content-Type: application/x-www-form-urlencoded\r\n"
+            "Content-Length: %d\r\nConnection: close\r\n\r\n%s"
+            % (jar, anon_cookie, len(body), body)
+        )
+
+    def test_a_cookie_cannot_write_extra_attributes_into_the_reply(self):
+        """A quoted cookie value may hold a semicolon; planting it back
+        unexamined would let a visitor append Set-Cookie attributes."""
+        head = self._vote_carrying(r'"a\073Domain=evil.example"').split("\r\n\r\n")[0]
+        self.assertNotIn("evil.example", head)
+
+    def test_a_cookie_of_any_size_is_not_written_into_the_ledger(self):
+        reply = self._vote_carrying("B" * 5000)
+        self.assertTrue(reply.startswith("HTTP/1.1 303"), reply[:60])
+        # whatever was stored, it is one of our own tokens, not their 5000
+        planted = [
+            line for line in reply.split("\r\n")
+            if line.lower().startswith("set-cookie") and "notebook_anon" in line
+        ]
+        self.assertTrue(planted, "no fresh token was minted")
+        self.assertNotIn("B" * 100, planted[0])
+
+
+class TestTheRateLimiterCannotBeHandedToTheVisitor(NotebookTestCase):
+    """X-Forwarded-For is written by whoever is talking to us, and appended
+    to by each hop. Reading the first entry lets a visitor pick their own
+    bucket and sign-in limits stop meaning anything."""
+
+    def post_enter(self, email, header):
+        visitor = self.notebook.visitor()
+        page = visitor.get("/enter")
+        csrf = token_on(page.body)
+        jar = "; ".join("%s=%s" % (c.name, c.value) for c in visitor.jar)
+        body = urllib.parse.urlencode({"csrf": csrf, "email": email})
+        reply = self.notebook.raw(
+            "POST /enter HTTP/1.1\r\nHost: x\r\nCookie: %s\r\n%s\r\n"
+            "Content-Type: application/x-www-form-urlencoded\r\n"
+            "Content-Length: %d\r\nConnection: close\r\n\r\n%s"
+            % (jar, header, len(body), body)
+        )
+        return int(reply.split(" ")[1])
+
+    def test_a_made_up_forwarding_header_does_not_buy_a_fresh_allowance(self):
+        # Spend the allowance, every request claiming a different address.
+        # If the header were believed, each would land in a bucket of its
+        # own and the limit would never be reached.
+        codes = [
+            self.post_enter("crowd%d@example.org" % i, "X-Forwarded-For: 9.9.9.%d" % i)
+            for i in range(22)
+        ]
+        self.assertIn(429, codes, "a made-up X-Forwarded-For bought a fresh allowance")
+
+    def test_the_edge_is_still_believed_when_it_speaks(self):
+        """Behind Fly the real address does arrive in a header, and two
+        genuinely different visitors must not share one allowance."""
+        first = [
+            self.post_enter("edgeone%d@example.org" % i, "Fly-Client-IP: 203.0.113.7")
+            for i in range(22)
+        ]
+        self.assertIn(429, first, "the edge address was never used as a bucket")
+        # a different visitor, arriving through the same edge, is not caught
+        # in the first one's limit
+        self.assertEqual(
+            self.post_enter("edgetwo@example.org", "Fly-Client-IP: 203.0.113.8"), 200
+        )
 
 
 class TestSecureCookies(unittest.TestCase):
