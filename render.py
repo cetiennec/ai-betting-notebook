@@ -128,12 +128,14 @@ def social_head(title, description, path=""):
 
 def layout(title, body, user=None, wide_footer=True, description="", path=""):
     if user:
-        who = 'signed as <b>%s</b>' % e(user["pseudo"])
+        # Four doors and not six. Your copies is a heading on the desk, and
+        # signing out belongs beside the name it signs out of rather than
+        # in a row of places to go.
+        who = ('signed as <b>%s</b> <a class="leave" href="/leave">sign out</a>'
+               % e(user["pseudo"]))
         room = (
             '<a href="/propose">propose a bet</a>'
             '<a href="/desk">your desk</a>'
-            '<a href="/desk#copies">your copies</a>'
-            '<a href="/leave">sign out</a>'
         )
         if db.is_keeper(user):
             room += '<a href="/keep">keep the ledger</a>'
@@ -979,9 +981,9 @@ def desk_page(user, csrf, mine, backed, note="", error=""):
     return layout("Your desk", body, user)
 
 
-def keep_page(user, csrf, counts, bets, hands, query="", note="", error=""):
-    """The moderation desk: every entry, struck or standing, and the hands
-    that wrote them."""
+def keep_page(user, csrf, counts, bets, hands, query="", note="", error="", flagged=()):
+    """The moderation desk: every entry, struck or standing, the hands
+    that wrote them, and whatever the notebook thinks is worth a read."""
     banner = ""
     if note:
         banner = '<div class="notice plain">%s</div>' % e(note)
@@ -1064,6 +1066,34 @@ def keep_page(user, csrf, counts, bets, hands, query="", note="", error=""):
             }
         )
 
+    # Entries whose wording is on the watched list. A flag, never a
+    # verdict: what is offered here are the same two deeds as anywhere
+    # else on this page, and reading the thing is the keeper's job.
+    watched = "".join(
+        """<li class="entry watched">
+  <div class="tally"><span class="count">%(votes)d</span><span class="word">%(word)s</span></div>
+  <div>
+    <p class="claim"><a href="/bet/%(id)d">%(claim)s</a></p>
+    <p class="meta"><span class="cat">%(cat)s</span> &middot; written by %(who)s, %(when)s
+       &middot; entry %(id)d</p>
+    <p class="found">on the list: %(words)s</p>
+    <div class="deeds no-print">%(deeds)s</div>
+  </div>
+</li>""" % {
+            "votes": b["votes"],
+            "word": "vote" if b["votes"] == 1 else "votes",
+            "id": b["id"],
+            "claim": e(b["claim"]),
+            "cat": subject_line(b),
+            "who": e(db.byline(b)),
+            "when": date_of(b["created_at"]),
+            "words": " &middot; ".join(e(w) for w in words),
+            "deeds": (deed("Strike it", "strike", b["id"], why_box=True)
+                      + deed("Burn it", "burn", b["id"], danger=True)),
+        }
+        for b, words in flagged
+    )
+
     body = """%(banner)s
 <h2>Keeping the ledger</h2>
 <p class="lede">%(bets)d standing, %(struck)d struck out, %(people)d %(hands)s,
@@ -1075,6 +1105,15 @@ def keep_page(user, csrf, counts, bets, hands, query="", note="", error=""):
          placeholder="find an entry &mdash; a word, a name, a year">
   <button type="submit">look</button>
 </form>
+
+<h2>Worth a look (%(nflagged)d)</h2>
+<p class="hint">Entries using wording the notebook watches for. Nothing has been
+   done to them and nothing will be: a bet is not struck for being unwelcome or
+   probably wrong, and a word off a list is not a verdict &mdash; a claim about
+   a thing reads the same to a list as a wish for it. Striking one takes it off
+   this list. The list itself is in <span class="mono">watch.py</span>, kept by
+   hand.</p>
+%(watched)s
 
 <h2>Every entry (%(n)d)</h2>
 <p class="hint">Striking rules a line through an entry: it leaves the ledger
@@ -1095,6 +1134,11 @@ def keep_page(user, csrf, counts, bets, hands, query="", note="", error=""):
         "votes": counts["votes"],
         "marks": "mark" if counts["votes"] == 1 else "marks",
         "query": e(query),
+        "nflagged": len(flagged),
+        "watched": (
+            '<ol class="ledger">%s</ol>' % watched if watched
+            else '<p class="hint">Nothing is waiting. Every standing entry reads clean.</p>'
+        ),
         "n": len(bets),
         "entries": entries and "".join(entries) or '<p class="hint">Nothing to show.</p>',
         "rows": "".join(rows),
@@ -1254,6 +1298,11 @@ def house_page(user=None):
   <li>against the law, or an attempt to use the book to reach somebody who
       does not want to be reached.</li>
 </ul>
+<p>The notebook watches for a short list of wording &mdash; hate slogans, the
+   numbers that stand in for them, slurs &mdash; and when an entry uses any of
+   it, the keeper is told to go and read that entry. Nothing is struck for
+   being on a list: a claim about a thing reads the same to a list as a wish
+   for it, and telling those apart is a person's job, not a filter's.</p>
 <p>A struck entry is ruled through rather than torn out, and it can be put
    back: a judgement made by one person at one moment is exactly the sort of
    thing that ought to be reversible. A bet is <b>not</b> struck for being
@@ -1262,8 +1311,9 @@ def house_page(user=None):
 
 <h2>Your name and your address</h2>
 <p>You sign with a pen name, which you may change or hide at any time. Nothing
-   here checks it against anything: if you would rather be nobody, pick a
-   stupid one. Your address is never shown to anyone, and is kept for one
+   here checks it against anything &mdash; if you would rather be nobody, pick a
+   stupid one &mdash; except that a name wearing a slur is refused, because a
+   pen name is worn on every page you write and nobody chose to read it. Your address is never shown to anyone, and is kept for one
    reason: to post you a key when you sign in, and the yearly letter if you
    asked for one.</p>
 

@@ -19,6 +19,32 @@ OUTBOX = os.path.join(db.DATA_DIR, "outbox")
 SENDER = os.environ.get("SMTP_FROM", "notebook@future-with-ai.local")
 
 
+def warn_the_keepers(bet_id, claim, words, where):
+    """Tell whoever keeps the ledger that an entry is worth a second read.
+
+    Not a refusal and not a strike: the notebook has written the bet down
+    as it always does, and this is the note that says a person should look
+    at it. If nobody is named in NOTEBOOK_KEEPERS there is nobody to tell,
+    and the entry still waits on the desk at /keep."""
+    if not db.KEEPERS:
+        return 0
+    body = (
+        "Entry %d was written just now, and its wording is on the list the\n"
+        "notebook watches:\n\n"
+        "    %s\n\n"
+        "What it says:\n\n"
+        "    %s\n\n"
+        "Nothing has been done to it. A bet is not struck for being unwelcome\n"
+        "or probably wrong - this is only a note that somebody should read it.\n"
+        "It is at %s, and the desk is at %s/keep.\n"
+    ) % (bet_id, ", ".join(words), claim, where, where.rsplit("/bet/", 1)[0])
+    sent = 0
+    for address in sorted(db.KEEPERS):
+        if send(address, "Worth a look: entry %d" % bet_id, body):
+            sent += 1
+    return sent
+
+
 def looks_like_email(value):
     return bool(re.match(r"^[^@\s]+@[^@\s.]+\.[^@\s]+$", (value or "").strip()))
 

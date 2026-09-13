@@ -24,6 +24,7 @@ from urllib.parse import parse_qs, urlparse, quote
 import db
 import mail
 import render
+import watch
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 STATIC = os.path.join(ROOT, "static")
@@ -638,11 +639,20 @@ class Notebook(BaseHTTPRequestHandler):
         if not is_keeper(user):
             return self.no_entry(user)
         query = args.get("q", "")
+        bets = db.list_bets(conn, user["id"], query, sort="newest", struck=True)
+        # Worked out as the page is drawn rather than written down when a
+        # bet arrives: the list is kept by hand and changes, and an entry
+        # flagged by a word added last week should show up this week. A
+        # struck entry has been dealt with and drops off.
+        flagged = [
+            (b, watch.trips(b["claim"], b["reasoning"]))
+            for b in bets if not b["removed_at"]
+        ]
         return self.reply(
             render.keep_page(
-                user, self.csrf_token(), db.tally(conn),
-                db.list_bets(conn, user["id"], query, sort="newest", struck=True),
+                user, self.csrf_token(), db.tally(conn), bets,
                 db.people(conn), query, note, error,
+                flagged=[(b, words) for b, words in flagged if words],
             )
         )
 
@@ -770,6 +780,8 @@ class Notebook(BaseHTTPRequestHandler):
         bet_id = db.write_draft(conn, token, user["id"])
         if bet_id:
             db.toggle_vote(conn, bet_id, user["id"])  # you back your own bet
+            written = db.get_bet(conn, bet_id, user["id"])
+            self.watched(conn, bet_id, written["claim"], written["reasoning"])
             return self.go("/bet/%d?welcome=1" % bet_id, cookie=session)
         return self.go("/?welcome=1", cookie=session)
 
@@ -827,10 +839,14 @@ class Notebook(BaseHTTPRequestHandler):
             return self.reply(
                 render.revise_page(bet, user, self.csrf_token(), values, trouble), 400
             )
-        db.revise_bet(
+        changed = db.revise_bet(
             conn, bet["id"], user["id"], claim, reasoning[:MAX_REASONING],
             subjects, int(horizon),
         )
+        if changed:
+            # A bet is corrected in the open, and can be corrected into
+            # something else; the wording that matters is today's.
+            self.watched(conn, bet["id"], claim, reasoning)
         return self.go("/bet/%d" % bet["id"])
 
     def bet_as_written(self, form):
@@ -893,6 +909,7 @@ class Notebook(BaseHTTPRequestHandler):
             conn, user["id"], claim, reasoning[:MAX_REASONING], subjects, int(horizon), anonymous
         )
         db.toggle_vote(conn, bet_id, user["id"])  # you back your own bet
+        self.watched(conn, bet_id, claim, reasoning)
         return self.go("/bet/%d" % bet_id)
 
     def post_propose_sign(self, conn, user, form):
@@ -916,6 +933,18 @@ class Notebook(BaseHTTPRequestHandler):
             ),
             draft=dict(written, horizon=horizon),
         )
+
+    def watched(self, conn, bet_id, claim, reasoning):
+        """Put an entry in front of the keeper if its wording asks for it.
+
+        Never a refusal. The bet is in the ledger by the time this runs,
+        because the house rules say what gets struck and "a word off a
+        list" is not on it - what this buys is that a person reads it
+        soon, rather than whenever somebody happens to scroll past."""
+        words = watch.trips(claim, reasoning)
+        if words:
+            mail.warn_the_keepers(bet_id, claim, words, "%s/bet/%d" % (BASE_URL, bet_id))
+        return words
 
     def post_vote(self, conn, user, raw_id):
         if not raw_id.isdigit() or db.get_bet(conn, int(raw_id)) is None:
@@ -995,6 +1024,9 @@ class Notebook(BaseHTTPRequestHandler):
             return self.reply(self.desk(conn, user, error="A pen name wants 2 to 32 letters."), 400)
         if db.pseudo_taken(conn, pseudo, user["id"]):
             return self.reply(self.desk(conn, user, error="Somebody writes under that name already."), 400)
+        trouble = watch.name_trouble(pseudo)
+        if trouble:
+            return self.reply(self.desk(conn, user, error=trouble), 400)
         db.update_user(conn, user["id"], pseudo, show, yearly)
         return self.reply(self.desk(conn, db.user_by_id(conn, user["id"]), note="Desk saved."))
 

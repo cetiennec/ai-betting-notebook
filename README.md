@@ -52,6 +52,7 @@ python3 test_notebook.py                     # the tests; -v to name each one
 | **Yearly letter** | opt in at your desk: one letter a year with your bets, the ones you backed, and which have come due |
 | **House rules** | `/house` — what the place is for, what makes a good entry, and what gets struck out |
 | **Keeping it** | `/keep` — the moderation desk, for whoever is named in `NOTEBOOK_KEEPERS` |
+| **Watched words** | a short hand-kept list in `watch.py`. A pen name wearing one is **refused**; a bet using one is **flagged and never refused** — it goes into the ledger as written, the keepers get a letter, and it waits under *worth a look* at `/keep` until somebody reads it. A claim about a thing reads the same to a list as a wish for it, so the list never holds the pen |
 
 ## Layout
 
@@ -59,6 +60,7 @@ python3 test_notebook.py                     # the tests; -v to name each one
 app.py                 the server, the routes, the CLI, the example ledger
 db.py                  schema and every query
 render.py              every page, as plain HTML strings
+watch.py               the watched words, and the two ways of matching them
 mail.py                letters: the login key and the once-a-year letter
 test_notebook.py       the tests
 static/notebook.css    the whole look — paper, ink, and the print rules
@@ -164,6 +166,11 @@ which of its guarantees are real:
   overwrites it. With nothing in front, the socket is the only address worth
   believing: off an edge, a header is written by whoever is talking to us, and
   believing one would hand over the rate limiter and the ballot box together.
+- **A word list is not a moderator.** `watch.py` is short and hand-kept on
+  purpose: an imported list of thousands is mostly false positives in a place
+  where the keeper reads every entry anyway, and the entries it quietly
+  refuses are the ones nobody ever sees. It flags bets and refuses pen names,
+  and that is the whole of its authority.
 - **It runs on `ThreadingHTTPServer`**, which is fine at this size and is not
   a real WSGI server.
 - **A notebook on an `https://` address will not open without `SMTP_HOST`.**

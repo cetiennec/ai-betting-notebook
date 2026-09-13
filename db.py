@@ -12,7 +12,11 @@ import secrets
 from datetime import datetime, timedelta, timezone
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.path.join(ROOT, "data")
+# Everything the notebook writes lives under here: the ledger, the outbox,
+# the backups. Named in the environment so that a test run - or a second
+# notebook on one machine - keeps its own, rather than posting its letters
+# into the working copy.
+DATA_DIR = os.environ.get("NOTEBOOK_DATA", os.path.join(ROOT, "data"))
 DB_PATH = os.environ.get("NOTEBOOK_DB", os.path.join(DATA_DIR, "notebook.sqlite3"))
 
 SESSION_DAYS = 90

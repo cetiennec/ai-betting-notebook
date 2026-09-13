@@ -70,6 +70,15 @@ nav.hall {
   font-size: 0.95rem;
 }
 nav.hall .who { color: var(--ink-faded); font-style: italic; font-variant: normal; }
+/* Signing out is an action on the name beside it, not another place to
+   go: set quieter than the doors, and next to whose door it closes. */
+nav.hall .who .leave {
+  font-style: normal;
+  font-variant: small-caps;
+  font-size: 0.85em;
+  color: var(--ink-faded);
+  margin-left: 0.3rem;
+}
 
 /* --- generic type ------------------------------------------------------ */
 
@@ -480,6 +489,16 @@ ul.subject-list .n {
 /* --- keeping the ledger ------------------------------------------------ */
 
 .entry.struck { opacity: 0.62; }
+/* Flagged for a read, and marked no more strongly than that: the rubric
+   is for the words that were found, not for the entry itself. */
+.entry.watched { border-left: 3px solid var(--rubric); padding-left: 0.9rem; }
+.entry.watched .found {
+  margin: 0.4rem 0 0;
+  font-size: 0.82rem;
+  font-variant: small-caps;
+  letter-spacing: 0.05em;
+  color: var(--rubric);
+}
 .entry.struck .claim a { text-decoration: line-through; }
 
 .entry .deeds { margin-top: 0.7rem; gap: 0.5rem; align-items: center; }

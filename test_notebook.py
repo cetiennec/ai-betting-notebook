@@ -45,6 +45,7 @@ class Notebook:
         self.env = dict(os.environ)
         self.env.pop("SMTP_HOST", None)  # never post real letters from a test
         self.env.update(
+            NOTEBOOK_DATA=self.dir,   # letters and backups land here, not in the repo
             NOTEBOOK_DB=self.db,
             NOTEBOOK_HOST="127.0.0.1",
             NOTEBOOK_URL=env.pop("NOTEBOOK_URL", self.base),
@@ -1370,6 +1371,149 @@ class TestTheDoorIsShut(NotebookTestCase):
                               csrf_from="/")
         self.assertEqual(struck.status, 404)
         self.assertEqual(self.notebook.visitor().get("/bet/1").status, 200)
+
+
+class TestWatchedWords(unittest.TestCase):
+    """The matcher itself. Two questions, two answers: a bet is flagged
+    and never refused, a pen name is refused and never explained."""
+
+    def setUp(self):
+        sys.path.insert(0, ROOT)
+        import watch
+        self.watch = watch
+
+    def test_a_bet_about_a_thing_is_not_a_bet_for_it(self):
+        """The whole reason bets are flagged rather than refused."""
+        claim = ("By 2031, a party the press calls neo-nazi will lead a national "
+                 "poll in western Europe.")
+        self.assertEqual(self.watch.trips(claim), ["nazi"])   # flagged, and that is all
+
+    def test_ordinary_writing_trips_nothing(self):
+        for text in (
+            "By 2088, 88% of doctors will take a second opinion from a machine.",
+            "By 2030, Pakistan will run a national model of its own.",
+            "By 2029, suspicion of synthetic images will be the default.",
+            "By 2032, a raccoon will be photographed using a touchscreen.",
+        ):
+            self.assertEqual(self.watch.trips(text), [], text)
+
+    def test_slogans_and_codes_are_found(self):
+        self.assertIn("blood and soil", self.watch.trips("blood and soil, they chanted"))
+        self.assertIn("1488", self.watch.trips("the 1488 crowd"))
+        self.assertIn("14 words", self.watch.trips("reciting the 14 words"))
+
+    def test_a_name_wearing_one_is_refused_however_it_is_spelled(self):
+        for name in ("n1gg3r", "HeilHitler88", "f.a.g.g.o.t", "1488er", "nazi",
+                     "the_nazi_hunter", "SS_88_HH"):
+            self.assertIsNotNone(self.watch.name_trouble(name), name)
+
+    def test_an_ordinary_name_is_left_alone(self):
+        for name in ("cassandra", "grid.watcher", "raccoon", "pakistani_bettor",
+                     "Fagan", "2088watcher", "the.archivist"):
+            self.assertIsNone(self.watch.name_trouble(name), name)
+
+    def test_the_refusal_does_not_teach_the_way_round_itself(self):
+        said = self.watch.name_trouble("n1gg3r")
+        self.assertNotIn("n1gg3r", said)
+        self.assertNotIn("nigger", said)
+
+
+class TestWatchingWhatIsWritten(FreshNotebookTestCase):
+    """What the notebook does about it: refuse the name, flag the bet,
+    write to whoever keeps the ledger."""
+
+    env = {"NOTEBOOK_KEEPERS": KEEPER}
+
+    def outbox(self):
+        """Every letter the notebook has written, as text."""
+        box = os.path.join(self.notebook.dir, "outbox")
+        if not os.path.isdir(box):
+            return ""
+        return "\n".join(
+            open(os.path.join(box, name)).read() for name in sorted(os.listdir(box))
+        )
+
+    def wrote(self, visitor, claim, reasoning=""):
+        reply = visitor.post("/propose", {
+            "claim": claim, "reasoning": reasoning,
+            "subject": "politics & governance", "horizon": "2033",
+        })
+        self.assertEqual(reply.status, 303, reply.body[:400])
+        return reply.headers["Location"]
+
+    def test_a_pen_name_on_the_list_is_refused_at_the_desk(self):
+        visitor = self.signed_in("namer@example.org")
+        reply = visitor.post("/desk", {"pseudo": "HeilHitler88", "show_pseudo": "1"})
+        self.assertEqual(reply.status, 400)
+        self.assertIn("That name will not do", reply.body)
+        self.assertNotIn("HeilHitler88", visitor.get("/desk").body)
+
+    def test_an_ordinary_pen_name_still_saves(self):
+        visitor = self.signed_in("ordinary@example.org")
+        reply = visitor.post("/desk", {"pseudo": "raccoon", "show_pseudo": "1"})
+        self.assertEqual(reply.status, 200)
+        self.assertIn("Desk saved", reply.body)
+
+    def test_a_flagged_bet_is_written_down_like_any_other(self):
+        """It goes in the ledger. The keeper decides, not the list."""
+        where = self.wrote(
+            self.signed_in("writer@example.org"),
+            "By 2033, a neo-nazi party will hold a ministry in western Europe.",
+            "Written as an expectation, not a wish.",
+        )
+        page = self.notebook.visitor().get(where)
+        self.assertEqual(page.status, 200)
+        self.assertIn("neo-nazi party will hold a ministry", page.body)
+
+    def test_the_keeper_is_written_to(self):
+        self.wrote(
+            self.signed_in("writer@example.org"),
+            "By 2033, a neo-nazi party will hold a ministry in western Europe.",
+        )
+        letters = self.outbox()
+        self.assertIn("Worth a look", letters)
+        self.assertIn(KEEPER, letters)
+        self.assertIn("nazi", letters)
+
+    def test_a_clean_bet_writes_to_nobody(self):
+        self.wrote(
+            self.signed_in("clean@example.org"),
+            "By 2033, most people will take a second opinion from a machine.",
+        )
+        self.assertNotIn("Worth a look", self.outbox())
+
+    def test_the_desk_lists_what_is_worth_a_look(self):
+        self.wrote(
+            self.signed_in("writer@example.org"),
+            "By 2033, a neo-nazi party will hold a ministry in western Europe.",
+        )
+        desk = self.signed_in(KEEPER).get("/keep").body
+        self.assertIn("Worth a look (1)", desk)
+        self.assertIn("on the list: nazi", desk)
+
+    def test_striking_one_takes_it_off_the_list(self):
+        where = self.wrote(
+            self.signed_in("writer@example.org"),
+            "By 2033, a neo-nazi party will hold a ministry in western Europe.",
+        )
+        keeper = self.signed_in(KEEPER)
+        keeper.post("/keep", {
+            "deed": "strike", "bet": where.rsplit("/", 1)[1], "why": "read and struck",
+        }, csrf_from="/keep")
+        desk = keeper.get("/keep").body
+        self.assertIn("Worth a look (0)", desk)
+        self.assertIn("Every standing entry reads clean", desk)
+
+    def test_a_bet_revised_into_something_else_is_flagged_then(self):
+        writer = self.signed_in("reviser@example.org")
+        where = self.wrote(writer, "By 2033, a machine will write a national anthem.")
+        self.assertNotIn("Worth a look", self.outbox())
+
+        writer.post(where + "/revise", {
+            "claim": "By 2033, the 14 words will be printed in a national manifesto.",
+            "reasoning": "", "subject": "politics & governance", "horizon": "2033",
+        })
+        self.assertIn("Worth a look", self.outbox())
 
 
 class TestKeepingTheLedger(FreshNotebookTestCase):
