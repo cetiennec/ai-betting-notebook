@@ -283,10 +283,14 @@ def shorten(text, limit=LEDGER_EXCERPT, slack=60):
     return text[:cut].rstrip(" ,;:-\u2014"), text[cut:].strip()
 
 
-def entry(bet, user, csrf, with_reasoning=True):
+def entry(bet, user, csrf, with_reasoning=True, lead=False):
+    """One row of the ledger. `lead` is the entry at the top of the plain
+    ledger: the same row, given the size the thing deserves, and its
+    reasoning whole rather than folded - somebody arriving at the notebook
+    should meet a bet, not the apparatus for finding one."""
     because = ""
     if with_reasoning and bet["reasoning"].strip():
-        opening, rest = shorten(bet["reasoning"])
+        opening, rest = (bet["reasoning"].strip(), "") if lead else shorten(bet["reasoning"])
         if rest:
             # A disclosure, not a script: the rest of the reasoning is on
             # the page already, folded away until it is asked for.
@@ -299,7 +303,7 @@ def entry(bet, user, csrf, with_reasoning=True):
             )
         else:
             because = '<p class="because">%s</p>' % e(opening)
-    return """<li class="entry">
+    return """<li class="entry%(lead)s">
   %(vote)s
   <div>
     <p class="claim"><a href="/bet/%(id)d">%(claim)s</a>%(stamp)s</p>
@@ -308,6 +312,7 @@ def entry(bet, user, csrf, with_reasoning=True):
     %(because)s
   </div>
 </li>""" % {
+        "lead": " lead" if lead else "",
         "vote": vote_control(bet, user, csrf),
         "id": bet["id"],
         "claim": e(bet["claim"]),
@@ -373,9 +378,45 @@ def search_form(query, counts, category, status, sort):
 
 # --- pages ----------------------------------------------------------------
 
+def sift_block(query, counts, category, status, sort):
+    """The search box and the two rows of filters, foldable.
+
+    On a phone this apparatus was 168px of furniture above the first bet -
+    a third of the screen spent on the means of finding a bet rather than
+    on a bet. Narrow screens get it as one line that opens; wide ones get
+    it open and never see the line. It folds with a checkbox rather than a
+    details element because a details cannot be forced open by a media
+    query, and the apparatus should never be hidden where there is room
+    for it. No script either way.
+
+    It starts open for somebody who has already searched or narrowed: the
+    state of the filters is worth seeing when the filters are doing
+    something."""
+    busy = bool(query or category or status) or sort != "interesting"
+    return """<div class="sift">
+  <input type="checkbox" id="sift-open" class="sift-toggle"%(open)s>
+  <label class="sift-line" for="sift-open">search and sort the ledger</label>
+  <div class="sift-body">
+    %(search)s
+    %(filters)s
+  </div>
+</div>""" % {
+        "open": " checked" if busy else "",
+        "search": search_form(query, counts, category, status, sort),
+        "filters": filter_bar(counts, query, category, status, sort),
+    }
+
+
 def index(bets, counts, user, query, category, status, sort, csrf, note=""):
+    # The plain ledger - nothing searched, nothing narrowed, sorted the way
+    # it sorts by itself - is the only state in which the entry at the top
+    # is really the one most people are watching. Anywhere else it is just
+    # the first row of a list, and is set like one.
+    plain = not (query or category or status) and sort == "interesting"
     if bets:
-        ledger = '<ol class="ledger">%s</ol>' % "".join(entry(b, user, csrf) for b in bets)
+        ledger = '<ol class="ledger">%s</ol>' % "".join(
+            entry(b, user, csrf, lead=(plain and i == 0)) for i, b in enumerate(bets)
+        )
     elif query or category or status:
         ledger = '<p class="lede">Nothing in the ledger matches. Try a wider net, or <a href="/propose">write the bet yourself</a>.</p>'
     else:
@@ -388,8 +429,7 @@ def index(bets, counts, user, query, category, status, sort, csrf, note=""):
         head += " &mdash; searching &ldquo;%s&rdquo;" % e(query)
 
     body = """%(note)s
-%(search)s
-%(filters)s
+%(sift)s
 <h2>%(head)s <span class="hint">(%(n)d %(word)s)</span></h2>
 %(ledger)s
 <div class="deeds">
@@ -398,8 +438,7 @@ def index(bets, counts, user, query, category, status, sort, csrf, note=""):
   %(take)s
 </div>""" % {
         "note": note,
-        "search": search_form(query, counts, category, status, sort),
-        "filters": filter_bar(counts, query, category, status, sort),
+        "sift": sift_block(query, counts, category, status, sort),
         "head": head,
         "n": len(bets),
         "word": "bet" if len(bets) == 1 else "bets",
