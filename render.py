@@ -167,6 +167,14 @@ def social_head(title, description, path="", own_title=False, card=DEFAULT_CARD)
     }
 
 
+def hall(rooms, path):
+    """The row of doors, with the one you are standing in marked."""
+    return "".join(
+        '<a%s href="%s">%s</a>' % (' class="here"' if where == path else "", where, label)
+        for where, label in rooms
+    )
+
+
 def layout(title, body, user=None, wide_footer=True, description="", path="",
            own_title=False, card=DEFAULT_CARD, tagline=True):
     if user:
@@ -175,21 +183,16 @@ def layout(title, body, user=None, wide_footer=True, description="", path="",
         # in a row of places to go.
         who = ('signed as <b>%s</b> <a class="leave" href="/leave">sign out</a>'
                % e(user["pseudo"]))
-        room = (
-            '<a href="/propose">propose a bet</a>'
-            '<a href="/desk">your desk</a>'
-        )
+        rooms = [("/propose", "propose a bet"), ("/desk", "your desk")]
         if db.is_keeper(user):
-            room += '<a href="/keep">keep the ledger</a>'
+            rooms.append(("/keep", "keep the ledger"))
     else:
         who = "not signed"
         # Writing comes before signing: a stranger may take the first door
         # as readily as the second, and is asked for an address at the end.
-        room = (
-            '<a href="/propose">propose a bet</a>'
-            '<a href="/enter">sign in</a>'
-        )
-    room += '<a href="/house">house rules</a>'
+        rooms = [("/propose", "propose a bet"), ("/enter", "sign in")]
+    rooms.append(("/house", "house rules"))
+    room = hall(rooms, path)
     return """<!doctype html>
 <html lang="en">
 <head>
@@ -209,7 +212,7 @@ def layout(title, body, user=None, wide_footer=True, description="", path="",
     <div class="rules"></div>
   </header>
   <nav class="hall">
-    <a href="/">the ledger</a>
+    <a%(here)s href="/">the ledger</a>
     %(room)s
     <span class="who">%(who)s</span>
   </nav>
@@ -228,6 +231,7 @@ def layout(title, body, user=None, wide_footer=True, description="", path="",
         # notebook's pitch belongs where somebody is deciding whether to
         # read further, not above the thing they came to read.
         "tagline": '<p class="sub">%s</p>' % TAGLINE if tagline else "",
+        "here": ' class="here"' if path == "/" else "",
         "room": room,
         "who": who,
         "body": body,
@@ -316,7 +320,7 @@ def status_stamp(bet):
 LEDGER_UNFOLDED = 150
 
 
-def reasoning_block(bet, folded=True):
+def reasoning_block(bet):
     """The reasoning under a ledger entry: three lines of it, and the way
     to the rest.
 
@@ -327,7 +331,7 @@ def reasoning_block(bet, folded=True):
     reasoning turned out to fit, which is a question of pixels and cannot
     be answered here."""
     text = bet["reasoning"].strip()
-    if not folded or len(text) <= LEDGER_UNFOLDED:
+    if len(text) <= LEDGER_UNFOLDED:
         return '<p class="because">%s</p>' % e(text)
     return (
         '<div class="because folded">'
@@ -340,13 +344,17 @@ def reasoning_block(bet, folded=True):
 
 
 def entry(bet, user, csrf, with_reasoning=True, lead=False):
-    """One row of the ledger. `lead` is the entry at the top of the plain
-    ledger: the same row, given the size the thing deserves, and its
-    reasoning whole rather than folded - somebody arriving at the notebook
-    should meet a bet, not the apparatus for finding one."""
+    """One row of the ledger.
+
+    `lead` is the entry at the top of the plain ledger, and it is set
+    larger: somebody arriving at the notebook should meet a bet, not the
+    apparatus for finding one. Its reasoning folds at three lines like
+    every other entry's, though. It was left whole for a while, and all
+    that did was put the longest block on the page at the top of it,
+    which is the thing the fold is for."""
     because = ""
     if with_reasoning and bet["reasoning"].strip():
-        because = reasoning_block(bet, folded=not lead)
+        because = reasoning_block(bet)
     return """<li class="entry%(lead)s">
   %(vote)s
   <div>
@@ -707,8 +715,8 @@ def bet_page(bet, user, csrf, note="", earlier=()):
     body = """%(note)s
 <div class="bet-sheet">
   <p class="claim">%(claim)s%(stamp)s</p>
-  <p class="colophon">%(cat)s &middot; to be judged by %(year)d &middot;
-     written by %(who)s on %(when)s</p>
+  <p class="colophon"><span class="cat">%(cat)s</span> &middot; to be judged by
+     <b>%(year)d</b> &middot; written by %(who)s on %(when)s</p>
   %(because)s
   <div class="bet-foot">
     <dl class="record">

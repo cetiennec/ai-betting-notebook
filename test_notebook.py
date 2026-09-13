@@ -292,23 +292,24 @@ class TestWhatAnEntryShows(NotebookTestCase):
         # is no place to look.)
         self.assertIn('<p class="because">%s</p>' % reasoning, page)
 
-    def test_the_lead_entry_is_never_folded(self):
-        """The entry at the top of the plain ledger reads whole, however
-        long it runs - which is the point of setting it apart."""
+    def test_the_lead_entry_folds_like_every_other_one(self):
+        """It is set larger, and that is the whole of the difference. Left
+        whole, it put the longest block on the page at the top of it -
+        which is the thing the fold is for."""
         sys.path.insert(0, ROOT)
         import render
         row = dict(
-            id=99, claim="By 2034, the top of the ledger will read whole.",
+            id=99, claim="By 2034, the top of the ledger will read like the rest of it.",
             reasoning="Something worth saying at length. " * 12,
             votes=1, voted=0, category="education", extra_subjects=None,
             horizon=2034, status="open", created_at="2026-01-01T00:00:00+00:00",
             anonymous=0, author_pseudo="someone", author_show_pseudo=1,
         )
-        self.assertIn('<div class="because folded">', render.entry(row, None, "t"))
         lead = render.entry(row, None, "t", lead=True)
-        self.assertNotIn("see more", lead)
-        self.assertIn("entry lead", lead)
-        self.assertIn(row["reasoning"].strip(), lead)
+        self.assertIn("entry lead", lead)                      # larger
+        self.assertIn('<div class="because folded">', lead)    # and folded
+        self.assertIn("see more", lead)
+        self.assertIn(row["reasoning"].strip(), lead)          # all of it still there
 
     def test_a_bet_page_offers_the_classic_places_to_pass_it_on(self):
         page = self.notebook.visitor().get("/bet/1").body

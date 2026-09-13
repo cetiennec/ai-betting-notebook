@@ -53,11 +53,15 @@ a:hover { color: var(--rubric); }
 .masthead .sub {
   margin: 0.45rem auto 0;
   max-width: 30rem;
+  font-size: 0.95rem;
   font-style: italic;
   color: var(--ink-faded);
 }
 .masthead .rules { border-top: 3px double var(--ink); margin-top: 1rem; }
 
+/* The letterhead - the name, the line under it, the doors - is not the
+   page. Set quieter than what it sits over, so that the first thing in
+   full ink is the thing the page is about: on a bet, the claim. */
 nav.hall {
   display: flex;
   flex-wrap: wrap;
@@ -67,8 +71,12 @@ nav.hall {
   border-bottom: 1px solid var(--rule);
   font-variant: small-caps;
   letter-spacing: 0.05em;
-  font-size: 0.95rem;
+  font-size: 0.92rem;
 }
+nav.hall a { color: var(--ink-faded); text-decoration-color: var(--paper-edge); }
+nav.hall a:hover { color: var(--rubric); }
+/* Where you are standing, in the ink of the page you are on. */
+nav.hall a.here { color: var(--ink); text-decoration: none; border-bottom: 1px solid var(--rubric); }
 nav.hall .who { color: var(--ink-faded); font-style: italic; font-variant: normal; }
 /* Signing out is an action on the name beside it, not another place to
    go: set quieter than the doors, and next to whose door it closes. */
@@ -227,11 +235,11 @@ ol.ledger { list-style: none; margin: 0; padding: 0; }
   color: var(--ink-faded);
 }
 
-/* The top of the plain ledger is the bet most people are watching, so it
-   is set like the thing it is: the claim at something near the size it
-   has on its own page, and the reasoning whole rather than folded. It
-   keeps its rule, its tally and its place in the list - this is a ledger,
-   and the first line of one is still a line of it. */
+/* The top of the plain ledger is the bet most people are watching, so
+   the claim is set at something near the size it has on its own page. It
+   keeps its rule, its tally, its three lines of reasoning and its place
+   in the list - this is a ledger, and the first line of one is still a
+   line of it. */
 .entry.lead { padding-top: 0.6rem; }
 .entry.lead .claim { font-size: 1.4rem; line-height: 1.32; margin-bottom: 0.4rem; }
 .entry.lead .because { font-size: 1rem; }
@@ -580,13 +588,21 @@ table.hands .n { text-align: right; width: 5rem; }
 
 /* The claim is why the page exists, and on a page with no tagline over
    it there is room to say so. */
-.bet-sheet .claim { font-size: 1.75rem; line-height: 1.28; margin: 1.2rem 0 0.6rem; }
+.bet-sheet .claim { font-size: 1.75rem; line-height: 1.28; margin: 1.9rem 0 0.6rem; }
 .bet-sheet .colophon {
   font-style: italic;
   color: var(--ink-faded);
   border-bottom: 1px solid var(--rule);
   padding-bottom: 0.9rem;
 }
+/* The subjects read as subjects here, as they do in the ledger, and the
+   year it will be judged by is the fact worth catching in the line. */
+.bet-sheet .colophon .cat {
+  font-variant: small-caps;
+  font-style: normal;
+  letter-spacing: 0.05em;
+}
+.bet-sheet .colophon b { font-style: normal; font-weight: normal; color: var(--ink); }
 /* The reasoning carries the bet; the claim is only its headline. Set it
    off the way a printed book sets off a passage, and give it a name. */
 .bet-sheet .reasoning { margin: 1.5rem 0 1.8rem; }
