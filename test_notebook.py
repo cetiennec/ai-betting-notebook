@@ -566,15 +566,22 @@ class TestComingDue(FreshNotebookTestCase):
         writer = self.signed_in_as("teller@example.org")
         self.a_bet(writer, "By now, the front page will have said so.", self.year)
         front = self.notebook.visitor().get("/").body
-        self.assertIn("waiting to be called", front)
-        self.assertIn('href="/due"', front)
+        self.assertIn('<a class="figure due" href="/due">', front)
+        self.assertIn("to be called", front)
+
+    def test_nothing_waiting_is_not_offered_as_a_figure(self):
+        """A nought to be called is not news; the other three still are."""
+        front = self.notebook.visitor().get("/").body
+        self.assertNotIn('class="figure due"', front)
+        self.assertIn('<div class="state">', front)
 
     def test_the_front_page_says_what_the_notebook_amounts_to(self):
         front = self.notebook.visitor().get("/").body
-        state = re.search(r'<p class="state">(.*?)</p>', front, re.S).group(1)
-        self.assertIn("bets", state)
-        self.assertIn("hands", state)
-        self.assertIn("marks", state)
+        state = front.split('<div class="state">', 1)[1].split("<div class=\"sift\">", 1)[0]
+        for word in ("bets", "hands", "marks"):
+            self.assertIn('<span class="what">%s</span>' % word, state)
+        # the figures themselves, not a sentence about them
+        self.assertRegex(state, r'<span class="n">\d+</span>')
 
 
 # --- how long a bet has ---------------------------------------------------

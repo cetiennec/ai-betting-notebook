@@ -449,22 +449,29 @@ def sift_block(query, counts, category, status, sort):
 
 
 def state_line(tally, due):
-    """What the notebook amounts to, in one line: how much is written
-    down, by how many hands, and how much of it is waiting to be called.
+    """What the notebook amounts to: how much is written down, by how many
+    hands, how many marks, and how much of it is waiting to be called.
 
-    The last of those is the whole point of the place, and it was the one
-    thing no page said out loud."""
-    bits = [
-        "<b>%d</b> %s" % (tally["bets"], "bet" if tally["bets"] == 1 else "bets"),
-        "by <b>%d</b> %s" % (tally["people"], "hand" if tally["people"] == 1 else "hands"),
-        "<b>%d</b> %s" % (tally["votes"], "mark" if tally["votes"] == 1 else "marks"),
+    Set the way the ledger sets every other number - the figure over the
+    word for it, as on each entry's tally - because that is already what a
+    number looks like here, and a line of small italic type was not
+    something anybody was going to read."""
+    def figure(n, singular, plural, href=""):
+        shut, close = ("<a class=\"figure due\" href=\"%s\">" % href, "</a>") if href else (
+            '<div class="figure">', "</div>")
+        return '%s<span class="n">%d</span><span class="what">%s</span>%s' % (
+            shut, n, e(singular if n == 1 else plural), close
+        )
+
+    figures = [
+        figure(tally["bets"], "bet", "bets"),
+        figure(tally["people"], "hand", "hands"),
+        figure(tally["votes"], "mark", "marks"),
     ]
     if due:
-        bits.append(
-            '<a href="/due"><b>%d</b> waiting to be called</a>'
-            % due
-        )
-    return '<p class="state">%s</p>' % " &middot; ".join(bits)
+        # The one of these that is not a fact but an invitation.
+        figures.append(figure(due, "to be called", "to be called", href="/due"))
+    return '<div class="state">%s</div>' % "".join(figures)
 
 
 def index(bets, counts, user, query, category, status, sort, csrf, note="",
