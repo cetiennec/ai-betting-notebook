@@ -74,6 +74,23 @@ def address_source():
 is_keeper = db.is_keeper  # who may keep the ledger; see NOTEBOOK_KEEPERS
 
 
+def horizon_wanted(form):
+    """The year a bet should be judged by, from either way of saying it.
+
+    A span is how the thought arrives - "this is a five-year bet" - and a
+    year is what the ledger keeps, so the form takes either and the entry
+    records only the year. A year written out wins over a span: it is the
+    more particular of the two, and the form leaves that box empty unless
+    somebody has actually typed in it."""
+    year = (form.get("horizon") or "").strip()
+    if year:
+        return year
+    span = (form.get("horizon_in") or "").strip()
+    if span.isdigit() and 0 < int(span) <= 75:
+        return str(db.now().year + int(span))
+    return ""
+
+
 def bet_trouble(claim, subjects, horizon, keeping=None):
     """What is wrong with a bet as written, or None if it will do.
 
@@ -90,6 +107,8 @@ def bet_trouble(claim, subjects, horizon, keeping=None):
     if len(subjects) > db.MAX_SUBJECTS:
         return ("A bet may sit under %d subjects at most - pick the ones it is really about."
                 % db.MAX_SUBJECTS)
+    if not horizon:
+        return "Say when it should be judged: how long it has, or a year of your own."
     if not horizon.isdigit():
         return "The horizon must be a year between %d and %d." % (year, year + 75)
     if int(horizon) == keeping:
@@ -815,12 +834,17 @@ class Notebook(BaseHTTPRequestHandler):
         return self.go("/bet/%d" % bet["id"])
 
     def bet_as_written(self, form):
-        """The bet on a propose form, as it arrived."""
+        """The bet on a propose form, as it arrived.
+
+        The horizon is kept in both the shapes it may have been given, so
+        that a form shown again comes back the way it was filled in;
+        `horizon_wanted` is what turns the two into the one year."""
         return {
             "claim": form.get("claim", "").strip(),
             "reasoning": form.get("reasoning", "").strip()[:MAX_REASONING],
             "subjects": db.clean_subjects(self.every("subject")),
             "horizon": form.get("horizon", "").strip(),
+            "horizon_in": form.get("horizon_in", "").strip(),
             "anonymous": bool(form.get("anonymous")),
         }
 
@@ -835,7 +859,8 @@ class Notebook(BaseHTTPRequestHandler):
                 return self.reply(
                     render.propose_page(None, self.csrf_token(), written, first_time=True)
                 )
-            trouble = bet_trouble(written["claim"], written["subjects"], written["horizon"])
+            horizon = horizon_wanted(form)
+            trouble = bet_trouble(written["claim"], written["subjects"], horizon)
             if trouble:
                 return self.reply(
                     render.propose_page(
@@ -843,15 +868,17 @@ class Notebook(BaseHTTPRequestHandler):
                     ),
                     400,
                 )
-            return self.reply(render.sign_off_page(self.csrf_token(), written))
+            return self.reply(render.sign_off_page(self.csrf_token(), written, horizon))
         claim = form.get("claim", "").strip()
         reasoning = form.get("reasoning", "").strip()
         subjects = db.clean_subjects(self.every("subject"))
-        horizon = form.get("horizon", "").strip()
+        horizon = horizon_wanted(form)
         anonymous = bool(form.get("anonymous"))
         values = {
             "claim": claim, "reasoning": reasoning, "subjects": subjects,
-            "horizon": horizon, "anonymous": anonymous,
+            "horizon": form.get("horizon", "").strip(),
+            "horizon_in": form.get("horizon_in", "").strip(),
+            "anonymous": anonymous,
         }
         # Still their first: the rules stay up while they fix whatever
         # the notebook has just complained about.
@@ -875,7 +902,8 @@ class Notebook(BaseHTTPRequestHandler):
         if user:   # signed in in another tab while writing; no key needed
             return self.post_propose(conn, user, form)
         written = self.bet_as_written(form)
-        trouble = bet_trouble(written["claim"], written["subjects"], written["horizon"])
+        horizon = horizon_wanted(form)
+        trouble = bet_trouble(written["claim"], written["subjects"], horizon)
         if trouble:
             return self.reply(
                 render.propose_page(None, self.csrf_token(), written, trouble, first_time=True),
@@ -884,9 +912,9 @@ class Notebook(BaseHTTPRequestHandler):
         return self.post_key(
             conn, form.get("email", "").strip().lower(),
             lambda why, code: self.reply(
-                render.sign_off_page(self.csrf_token(), written, error=why), code
+                render.sign_off_page(self.csrf_token(), written, horizon, error=why), code
             ),
-            draft=written,
+            draft=dict(written, horizon=horizon),
         )
 
     def post_vote(self, conn, user, raw_id):

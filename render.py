@@ -677,7 +677,42 @@ FIRST_TIME_RULES = """<div class="notice plain first-time">
 </div>"""
 
 
+# The spans a bet is usually thought in. "This is a five-year bet" is how
+# the thought arrives; the year it works out to is what the ledger keeps,
+# so it is on the label rather than left as arithmetic for the writer.
+SPANS = (1, 2, 3, 5, 10, 20)
+DEFAULT_SPAN = 5
+
+
+def horizon_field(values, fresh=False):
+    """When a bet should be judged, asked as a length of time.
+
+    A span or a particular year - and a year written out wins, because it
+    is the more particular of the two and somebody who types 2043 means
+    it. The box is left empty when a span was chosen, so there is never a
+    stale year sitting in it to beat the span the writer just picked."""
+    year = db.now().year
+    chosen = str(values.get("horizon_in", DEFAULT_SPAN if fresh else "")).strip()
+    spans = "".join(
+        '<label class="tick"><input type="radio" name="horizon_in" value="%d"%s>'
+        '%s <span class="year">%d</span></label>'
+        % (span, " checked" if chosen == str(span) else "",
+           "in 1 year" if span == 1 else "in %d years" % span, year + span)
+        for span in SPANS
+    )
+    return """<div class="field"><span class="name">Judged after</span>
+    <p class="hint">How long should this have to come true? The ledger keeps the
+       year it works out to &mdash; that is what a stranger settles it by.</p>
+    <div class="spans">%s</div>
+    <label class="within"><span class="name">or a year of your own</span>
+      <input type="number" name="horizon" min="%d" max="%d" value="%s"
+             placeholder="%d"></label>
+    <p class="hint">A year written here is the one that counts.</p>
+  </div>""" % (spans, year, year + 75, e(values.get("horizon", "")), year + 40)
+
+
 def propose_page(user, csrf, values=None, error="", first_time=False):
+    fresh = not values
     values = values or {}
     year = db.now().year
     note = '<div class="notice">%s</div>' % e(error) if error else ""
@@ -704,8 +739,7 @@ def propose_page(user, csrf, values=None, error="", first_time=False):
     <textarea name="reasoning" maxlength="4000"
               placeholder="The reasoning, the thing that would prove you wrong, what you would accept as settled.">%(reasoning)s</textarea></label>
   %(subjects)s
-  <label class="field"><span class="name">Judged by the year</span>
-    <input type="number" name="horizon" min="%(min)d" max="%(max)d" value="%(horizon)s" required></label>
+  %(horizon)s
   <label class="tick"><input type="checkbox" name="anonymous" value="1"%(anon)s>
     Sign this one with no name, whatever my desk says</label>
   <div class="deeds"><button type="submit">%(deed)s</button></div>
@@ -717,15 +751,13 @@ def propose_page(user, csrf, values=None, error="", first_time=False):
         "claim": e(values.get("claim", "")),
         "reasoning": e(values.get("reasoning", "")),
         "subjects": subject_boxes(values.get("subjects")),
-        "min": year,
-        "max": year + 75,
-        "horizon": e(values.get("horizon", year + 5)),
+        "horizon": horizon_field(values, fresh),
         "anon": " checked" if values.get("anonymous") else "",
     }
     return layout("Propose a bet", body, user)
 
 
-def sign_off_page(csrf, values, error=""):
+def sign_off_page(csrf, values, resolved, error=""):
     """The last step of writing a bet you began before signing in.
 
     The bet itself is carried back in hidden fields and checked again on
@@ -733,12 +765,16 @@ def sign_off_page(csrf, values, error=""):
     form. Only the address is new, and it is asked for last, once the
     writing is done."""
     note = '<div class="notice">%s</div>' % e(error) if error else ""
+    # The horizon is carried back exactly as it was given - a span, a year,
+    # or both - and worked out again on the way in. What is shown is the
+    # year it comes to, since that is what the ledger will say.
     kept = "".join(
         '<input type="hidden" name="%s" value="%s">' % (name, e(value))
         for name, value in (
             ("claim", values.get("claim", "")),
             ("reasoning", values.get("reasoning", "")),
             ("horizon", values.get("horizon", "")),
+            ("horizon_in", values.get("horizon_in", "")),
         )
     ) + "".join(
         '<input type="hidden" name="subject" value="%s">' % e(s)
@@ -780,7 +816,7 @@ def sign_off_page(csrf, values, error=""):
         "kept": kept,
         "claim": e(values.get("claim", "")),
         "subjects": " &middot; ".join(e(s) for s in values.get("subjects", [])),
-        "horizon": e(values.get("horizon", "")),
+        "horizon": e(resolved),
         "because": ('<div class="because">%s</div>' % e(values["reasoning"].strip())
                     if values.get("reasoning", "").strip() else ""),
     }

@@ -319,6 +319,32 @@ div.field .name {
 }
 div.field .hint { margin: 0 0 0.2rem; }
 
+/* How long a bet has, rather than which year it lands in - a row of
+   spans with the year each one comes to, since the year is what the
+   ledger keeps and nobody should have to do that sum in their head. */
+.spans {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.15rem 1.2rem;
+  margin: 0.35rem 0 0.9rem;
+}
+.spans label.tick { margin: 0.15rem 0; white-space: nowrap; }
+.spans input { margin-right: 0.35rem; }
+.spans .year {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--ink-faded);
+}
+label.within { display: block; }
+label.within .name {
+  font-variant: small-caps;
+  letter-spacing: 0.07em;
+  font-size: 0.88rem;
+  color: var(--ink-faded);
+  margin-right: 0.5rem;
+}
+label.within input[type=number] { width: auto; max-width: 8rem; }
+
 input[type=text], input[type=email], input[type=search], input[type=number],
 select, textarea {
   width: 100%;

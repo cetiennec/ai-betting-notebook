@@ -164,6 +164,13 @@ def token_on(html):
     return found.group(1) if found else ""
 
 
+def db_year():
+    """This year, as the notebook reckons it."""
+    sys.path.insert(0, ROOT)
+    import db
+    return db.now().year
+
+
 def votes_on(html):
     found = re.search(r"Found interesting by</dt><dd>(\d+)", html)
     return int(found.group(1)) if found else None
@@ -455,6 +462,104 @@ class TestTheBroom(FreshNotebookTestCase):
         self.assertEqual(votes_on(visitor.get("/bet/2").body), before)  # an even number of minds
         self.assertEqual(visitor.post("/bet/2/vote", {}, csrf_from="/bet/2").status, 303)
         self.assertEqual(votes_on(visitor.get("/bet/2").body), before + 1)
+
+
+# --- how long a bet has ---------------------------------------------------
+
+class TestSayingWhenABetIsJudged(FreshNotebookTestCase):
+    """The form asks how long a bet has; the ledger keeps the year that
+    comes to. A year written out wins, for whoever wants a particular one."""
+
+    def setUp(self):
+        super().setUp()
+        self.year = db_year()
+
+    def signed_in(self, email):
+        visitor = self.notebook.visitor()
+        reply = visitor.post("/enter", {"email": email})
+        link = re.search(r"%s(/enter/[A-Za-z0-9_-]+)" % re.escape(self.notebook.base), reply.body)
+        self.assertIsNotNone(link, "no key was offered: %s" % reply.status)
+        visitor.get(link.group(1))
+        return visitor
+
+    def wrote(self, visitor, **extra):
+        fields = {
+            "claim": "By then, somebody will have said when this should be judged.",
+            "reasoning": "", "subject": "everyday life",
+        }
+        fields.update(extra)
+        reply = visitor.post("/propose", fields)
+        self.assertEqual(reply.status, 303, reply.body[:500])
+        return visitor.get(reply.headers["Location"]).body
+
+    def test_the_form_offers_spans_with_the_year_each_comes_to(self):
+        page = self.signed_in("spans@example.org").get("/propose").body
+        self.assertIn('name="horizon_in" value="5" checked', page)   # the default
+        for span in (1, 2, 3, 5, 10, 20):
+            self.assertIn('name="horizon_in" value="%d"' % span, page)
+            self.assertIn(str(self.year + span), page)
+        # and the box for a year of one's own starts empty
+        self.assertIn('name="horizon" min="%d" max="%d" value=""' % (self.year, self.year + 75), page)
+
+    def test_a_span_is_kept_as_the_year_it_comes_to(self):
+        page = self.wrote(self.signed_in("inten@example.org"), horizon_in="10")
+        self.assertIn("to be judged by %d" % (self.year + 10), page)
+
+    def test_a_year_of_your_own_wins_over_a_span(self):
+        page = self.wrote(
+            self.signed_in("particular@example.org"), horizon_in="5", horizon="2043"
+        )
+        self.assertIn("to be judged by 2043", page)
+
+    def test_saying_neither_is_refused(self):
+        visitor = self.signed_in("neither@example.org")
+        reply = visitor.post("/propose", {
+            "claim": "By then, somebody will have said nothing about when.",
+            "reasoning": "", "subject": "everyday life", "horizon_in": "", "horizon": "",
+        })
+        self.assertEqual(reply.status, 400)
+        self.assertIn("how long it has, or a year of your own", reply.body)
+
+    def test_a_made_up_span_is_refused(self):
+        visitor = self.signed_in("madeup@example.org")
+        reply = visitor.post("/propose", {
+            "claim": "By then, somebody will have invented a span of their own.",
+            "reasoning": "", "subject": "everyday life", "horizon_in": "900", "horizon": "",
+        })
+        self.assertEqual(reply.status, 400)
+
+    def test_a_stranger_may_use_a_span_too(self):
+        """Through the write-first door: the span is carried to the last
+        step as it was given, and shown there as the year it comes to."""
+        visitor = self.notebook.visitor()
+        step = visitor.post("/propose", {
+            "claim": "By then, a stranger will have said how long this has.",
+            "reasoning": "", "subject": "everyday life", "horizon_in": "3",
+        })
+        self.assertIn("to be judged by %d" % (self.year + 3), step.body)
+        self.assertIn('name="horizon_in" value="3"', step.body)
+
+        sent = visitor.post("/propose/sign", {
+            "claim": "By then, a stranger will have said how long this has.",
+            "reasoning": "", "subject": "everyday life", "horizon_in": "3",
+            "horizon": "", "email": "spanner@example.org",
+        }, csrf_from="/propose")
+        link = re.search(r"%s(/enter/[A-Za-z0-9_-]+)" % re.escape(self.notebook.base), sent.body)
+        self.assertIsNotNone(link, sent.body[:400])
+        opened = visitor.get(link.group(1))
+        page = visitor.get(opened.headers["Location"]).body
+        self.assertIn("to be judged by %d" % (self.year + 3), page)
+
+    def test_changing_a_bet_still_asks_for_the_year_it_carries(self):
+        """A horizon somebody chose is not quietly moved on by a span."""
+        visitor = self.signed_in("reviser@example.org")
+        reply = visitor.post("/propose", {
+            "claim": "By then, this bet will have been corrected at least once.",
+            "reasoning": "", "subject": "everyday life", "horizon": "2040",
+        })
+        page = visitor.get(reply.headers["Location"] + "/revise").body
+        self.assertIn('value="2040"', page)
+        self.assertNotIn("horizon_in", page)
 
 
 # --- writing a bet before there is a name to sign it with ----------------
