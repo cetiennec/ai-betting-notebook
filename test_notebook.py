@@ -86,8 +86,10 @@ class Notebook:
 
     # --- talking to it ---------------------------------------------------
 
-    def visitor(self):
-        return Visitor(self)
+    def visitor(self, address=None):
+        """A browser. `address` needs a notebook started with FLY_APP_NAME
+        set, which is what makes the edge header believable."""
+        return Visitor(self, address)
 
     def raw(self, request):
         """Send bytes exactly as written, return the raw response."""
@@ -110,8 +112,9 @@ class Notebook:
 class Visitor:
     """One browser: keeps its cookies, finds the csrf token on a page."""
 
-    def __init__(self, notebook):
+    def __init__(self, notebook, address=None):
         self.notebook = notebook
+        self.address = address
         self.jar = http.cookiejar.CookieJar()
         self.opener = urllib.request.build_opener(
             urllib.request.HTTPCookieProcessor(self.jar), NoRedirect()
@@ -131,6 +134,8 @@ class Visitor:
         return self._open(request)
 
     def _open(self, request):
+        if self.address:
+            request.add_header("Fly-Client-IP", self.address)
         try:
             with self.opener.open(request) as reply:
                 return Reply(reply.status, reply.headers, reply.read().decode("utf-8", "replace"))
@@ -226,9 +231,76 @@ class TestPages(NotebookTestCase):
         self.assertEqual(visitor.get("/export.txt").status, 200)
 
 
+class TestWhatAnEntryShows(NotebookTestCase):
+    """The ledger is a list, so an entry shows the opening of the reasoning
+    and folds the rest away rather than printing a paragraph each."""
+
+    def a_long_bet(self, claim, reasoning):
+        visitor = self.signed_in("longwinded@example.org")
+        reply = visitor.post("/propose", {
+            "claim": claim, "reasoning": reasoning,
+            "subject": "energy & infrastructure", "horizon": "2034",
+        })
+        self.assertEqual(reply.status, 303, reply.body[:400])
+        return visitor, reply.headers["Location"]
+
+    def signed_in(self, email):
+        visitor = self.notebook.visitor()
+        reply = visitor.post("/enter", {"email": email})
+        link = re.search(r"%s(/enter/[A-Za-z0-9_-]+)" % re.escape(self.notebook.base), reply.body)
+        self.assertIsNotNone(link, "no key was offered: %s" % reply.status)
+        visitor.get(link.group(1))
+        return visitor
+
+    def test_a_long_reasoning_is_folded_but_all_of_it_is_there(self):
+        claim = "By 2034, a long piece of reasoning will be folded away in the ledger."
+        ending = "and this is the last thing the reasoning says."
+        reasoning = ("Something worth saying at length. " * 12) + ending
+        visitor, where = self.a_long_bet(claim, reasoning)
+
+        page = visitor.get("/").body
+        self.assertIn("<details class=\"because\">", page)
+        self.assertIn("see more", page)
+        self.assertIn(ending, page)          # folded, not cut off
+        self.assertNotIn(reasoning, page)    # and not shown in one piece
+
+        # The bet's own page keeps it whole, as it always did.
+        sheet = visitor.get(where).body
+        self.assertIn(reasoning, sheet)
+        self.assertNotIn("see more", sheet)
+
+    def test_a_short_reasoning_wears_no_button(self):
+        claim = "By 2034, a short piece of reasoning will be left exactly as it was written."
+        reasoning = "Short enough to stand as it is."
+        visitor, _ = self.a_long_bet(claim, reasoning)
+        page = visitor.get("/").body
+        self.assertIn('<p class="because">%s</p>' % reasoning, page)
+
+    def test_a_bet_page_offers_the_classic_places_to_pass_it_on(self):
+        page = self.notebook.visitor().get("/bet/1").body
+        for place in ("twitter.com/intent", "bsky.app/intent", "facebook.com/sharer",
+                      "linkedin.com/sharing", "wa.me/?text=", "mailto:?subject="):
+            self.assertIn(place, page, "nowhere to pass a bet to %s" % place)
+        self.assertIn("pass it on", page)
+        self.assertIn("copy-link", page)
+        # the claim and the year travel with it, already written out
+        self.assertIn("to%20be%20judged%20by%202031.", page)
+        # and nothing of theirs is loaded onto the page
+        self.assertNotIn("<script src=\"https://", page)
+
+    def test_the_ledger_files_bets_under_energy_and_infrastructure(self):
+        page = self.notebook.visitor().get("/subject/energy-infrastructure")
+        self.assertEqual(page.status, 200)
+        self.assertIn("data centre electricity", page.body)
+
+
 # --- voting without an account -------------------------------------------
 
 class TestAnonymousVoting(NotebookTestCase):
+    # Started as if behind the Fly edge, so a visitor may say which
+    # address it is reading from - an anonymous mark is counted by one.
+    env = {"FLY_APP_NAME": "notebook-test"}
+
     def test_a_stranger_may_mark_a_bet_and_take_it_back(self):
         visitor = self.notebook.visitor()
         before = votes_on(visitor.get("/bet/1").body)
@@ -246,32 +318,134 @@ class TestAnonymousVoting(NotebookTestCase):
         self.assertIsNotNone(visitor.cookie("notebook_anon"))
         self.assertIn("Take back my vote", visitor.get("/bet/2").body)
 
-    def test_two_strangers_are_two_votes(self):
-        one, two = self.notebook.visitor(), self.notebook.visitor()
+    def test_two_strangers_at_two_addresses_are_two_votes(self):
+        one = self.notebook.visitor("203.0.113.7")
+        two = self.notebook.visitor("198.51.100.9")
         before = votes_on(one.get("/bet/3").body)
         one.post("/bet/3/vote", {}, csrf_from="/bet/3")
         two.post("/bet/3/vote", {}, csrf_from="/bet/3")
         self.assertEqual(votes_on(one.get("/bet/3").body), before + 2)
 
+    def test_one_address_marks_a_bet_once(self):
+        """Another browser at the same address - or the same browser with
+        its cookies swept - is the same anonymous voter, and is told so."""
+        first = self.notebook.visitor("203.0.113.20")
+        another = self.notebook.visitor("203.0.113.20")
+        before = votes_on(first.get("/bet/4").body)
+        self.assertEqual(first.post("/bet/4/vote", {}, csrf_from="/bet/4").status, 303)
+
+        refused = another.post("/bet/4/vote", {}, csrf_from="/bet/4")
+        self.assertEqual(refused.status, 409)
+        self.assertIn("already been marked once from your address", refused.body)
+        self.assertIsNone(another.cookie("notebook_anon"))
+        self.assertEqual(votes_on(first.get("/bet/4").body), before + 1)
+
+    def test_the_address_binds_a_new_mark_and_never_taking_one_back(self):
+        voter = self.notebook.visitor("203.0.113.30")
+        before = votes_on(voter.get("/bet/5").body)
+        voter.post("/bet/5/vote", {}, csrf_from="/bet/5")
+        self.assertEqual(voter.post("/bet/5/vote", {}, csrf_from="/bet/5").status, 303)
+        self.assertEqual(votes_on(voter.get("/bet/5").body), before)
+
+        # ...and with it taken back, the address is free for whoever is next.
+        next_one = self.notebook.visitor("203.0.113.30")
+        self.assertEqual(next_one.post("/bet/5/vote", {}, csrf_from="/bet/5").status, 303)
+        self.assertEqual(votes_on(voter.get("/bet/5").body), before + 1)
+
+    def test_a_signed_in_hand_is_not_bound_by_the_address(self):
+        """Two people in one house with two accounts are two hands: the
+        address only ever counts the marks that carry no name."""
+        house = "203.0.113.40"
+        stranger = self.notebook.visitor(house)
+        before = votes_on(stranger.get("/bet/6").body)
+        stranger.post("/bet/6/vote", {}, csrf_from="/bet/6")
+
+        for who in ("one.at.home@example.org", "two.at.home@example.org"):
+            member = self.signed_in(who, address=house)
+            self.assertEqual(member.post("/bet/6/vote", {}, csrf_from="/bet/6").status, 303)
+        self.assertEqual(votes_on(stranger.get("/bet/6").body), before + 3)
+
+    def test_a_mark_made_before_signing_in_follows_the_hand_in(self):
+        """The bug this fixes: mark a bet from the cookie, sign in, and the
+        tally counted the same person twice - while the button offered to
+        take back a mark that pressing it would not touch."""
+        visitor = self.notebook.visitor("203.0.113.50")
+        before = votes_on(visitor.get("/bet/7").body)
+        visitor.post("/bet/7/vote", {}, csrf_from="/bet/7")
+        self.assertEqual(votes_on(visitor.get("/bet/7").body), before + 1)
+
+        self.sign_in(visitor, "came.back@example.org")
+        self.assertEqual(votes_on(visitor.get("/bet/7").body), before + 1)
+        self.assertIn("Take back my vote", visitor.get("/bet/7").body)
+
+        # and now it really does come back off
+        self.assertEqual(visitor.post("/bet/7/vote", {}, csrf_from="/bet/7").status, 303)
+        self.assertEqual(votes_on(visitor.get("/bet/7").body), before)
+
+    def test_one_hand_signing_in_twice_keeps_one_mark(self):
+        """Marked while signed out, marked again at a second browser, then
+        both sign in as the same person: still one mark, not two."""
+        first = self.notebook.visitor("203.0.113.60")
+        second = self.notebook.visitor("198.51.100.60")
+        before = votes_on(first.get("/bet/8").body)
+        first.post("/bet/8/vote", {}, csrf_from="/bet/8")
+        second.post("/bet/8/vote", {}, csrf_from="/bet/8")
+        self.assertEqual(votes_on(first.get("/bet/8").body), before + 2)
+
+        self.sign_in(first, "one.hand@example.org")
+        self.sign_in(second, "one.hand@example.org")
+        self.assertEqual(votes_on(first.get("/bet/8").body), before + 1)
+
+    # --- signing in, for the tests above ---------------------------------
+
+    def sign_in(self, visitor, email):
+        reply = visitor.post("/enter", {"email": email})
+        link = re.search(r"%s(/enter/[A-Za-z0-9_-]+)" % re.escape(self.notebook.base), reply.body)
+        self.assertIsNotNone(link, "no key was offered for %s: %s" % (email, reply.status))
+        visitor.get(link.group(1))
+        return visitor
+
+    def signed_in(self, email, address=None):
+        return self.sign_in(self.notebook.visitor(address), email)
+
 
 class TestTheBroom(FreshNotebookTestCase):
-    """Clearing cookies still votes again - but not without end. Each of
-    these exhausts the day's new hands for 127.0.0.1, so they want a
-    notebook nobody else is voting in."""
+    """Sweeping the cookies and marking again. Each of these exhausts the
+    day's new hands for 127.0.0.1, so they want a notebook nobody else is
+    voting in."""
 
     HANDS = 8  # app.ANON_HANDS_PER_IP
 
-    def test_a_broom_runs_out_of_hands(self):
+    def test_a_swept_cookie_marks_the_same_bet_no_second_time(self):
+        """The whole point of counting by address: the broom gets nowhere
+        on a single entry, however many fresh browsers it opens."""
         before = votes_on(self.notebook.visitor().get("/bet/1").body)
-        for _ in range(self.HANDS):
-            fresh = self.notebook.visitor()
-            self.assertEqual(fresh.post("/bet/1/vote", {}, csrf_from="/bet/1").status, 303)
-        self.assertEqual(votes_on(self.notebook.visitor().get("/bet/1").body), before + self.HANDS)
+        self.assertEqual(
+            self.notebook.visitor().post("/bet/1/vote", {}, csrf_from="/bet/1").status, 303
+        )
+        for _ in range(3):
+            swept = self.notebook.visitor()   # same address, no cookie
+            self.assertEqual(swept.post("/bet/1/vote", {}, csrf_from="/bet/1").status, 409)
+        self.assertEqual(votes_on(self.notebook.visitor().get("/bet/1").body), before + 1)
 
+    def test_a_broom_runs_out_of_hands(self):
+        """One mark per bet per address is not a licence to take a fresh
+        hand for every entry in the ledger: the hands themselves are still
+        rationed by the day, and a refused mark spends one too."""
+        marked = 0
+        for bet in range(1, self.HANDS + 1):
+            fresh = self.notebook.visitor()
+            self.assertEqual(
+                fresh.post("/bet/%d/vote" % bet, {}, csrf_from="/bet/%d" % bet).status, 303
+            )
+            marked += 1
+        self.assertEqual(marked, self.HANDS)
+
+        before = votes_on(self.notebook.visitor().get("/bet/9").body)
         one_too_many = self.notebook.visitor()
-        self.assertEqual(one_too_many.post("/bet/1/vote", {}, csrf_from="/bet/1").status, 429)
+        self.assertEqual(one_too_many.post("/bet/9/vote", {}, csrf_from="/bet/9").status, 429)
         self.assertIsNone(one_too_many.cookie("notebook_anon"))
-        self.assertEqual(votes_on(self.notebook.visitor().get("/bet/1").body), before + self.HANDS)
+        self.assertEqual(votes_on(self.notebook.visitor().get("/bet/9").body), before)
 
     def test_a_hand_already_held_may_keep_changing_its_mind(self):
         visitor = self.notebook.visitor()
@@ -281,6 +455,121 @@ class TestTheBroom(FreshNotebookTestCase):
         self.assertEqual(votes_on(visitor.get("/bet/2").body), before)  # an even number of minds
         self.assertEqual(visitor.post("/bet/2/vote", {}, csrf_from="/bet/2").status, 303)
         self.assertEqual(votes_on(visitor.get("/bet/2").body), before + 1)
+
+
+# --- writing a bet before there is a name to sign it with ----------------
+
+class TestWritingBeforeSigningIn(FreshNotebookTestCase):
+    """A stranger may write the bet first and leave an address last. The
+    bet waits against the key that is posted out, and reaches the ledger
+    only when that key is opened."""
+
+    A_BET = {
+        "claim": "By 2032, a bet will have been written before its hand had any name.",
+        "reasoning": "Because asking for an address first is asking at the wrong end.",
+        "subject": "everyday life",
+        "horizon": "2032",
+    }
+
+    def key_from(self, reply):
+        link = re.search(r"%s(/enter/[A-Za-z0-9_-]+)" % re.escape(self.notebook.base), reply.body)
+        self.assertIsNotNone(link, "no key was offered: %s" % reply.status)
+        return link.group(1)
+
+    def test_the_propose_page_is_open_to_a_stranger(self):
+        page = self.notebook.visitor().get("/propose")
+        self.assertEqual(page.status, 200)
+        self.assertIn("the last step asks for an address", page.body)
+
+    def test_a_stranger_writes_the_bet_and_signs_it_afterwards(self):
+        visitor = self.notebook.visitor()
+        step = visitor.post("/propose", self.A_BET)
+        self.assertEqual(step.status, 200)
+        self.assertIn("One last thing", step.body)
+        self.assertIn(self.A_BET["claim"], step.body)
+
+        # Nothing is on the page yet - it has not been signed by anybody.
+        self.assertNotIn(self.A_BET["claim"], self.notebook.visitor().get("/").body)
+
+        sent = visitor.post(
+            "/propose/sign", dict(self.A_BET, email="late.signer@example.org"),
+            csrf_from="/propose",
+        )
+        self.assertEqual(sent.status, 200)
+        self.assertIn("being held against that key", sent.body)
+        self.assertNotIn(self.A_BET["claim"], self.notebook.visitor().get("/").body)
+
+        opened = visitor.get(self.key_from(sent))
+        self.assertEqual(opened.status, 303)
+        self.assertRegex(opened.headers["Location"], r"^/bet/\d+\?welcome=1$")
+
+        page = visitor.get(opened.headers["Location"])
+        self.assertIn(self.A_BET["claim"], page.body)
+        self.assertIn("Your bet is in the ledger", page.body)
+        self.assertEqual(votes_on(page.body), 1)   # a hand backs its own bet
+        self.assertIn(self.A_BET["claim"], self.notebook.visitor().get("/").body)
+
+    def test_a_key_never_opened_writes_nothing(self):
+        visitor = self.notebook.visitor()
+        visitor.post("/propose", self.A_BET)
+        visitor.post(
+            "/propose/sign", dict(self.A_BET, email="never.opened@example.org"),
+            csrf_from="/propose",
+        )
+        self.assertNotIn(self.A_BET["claim"], self.notebook.visitor().get("/").body)
+        self.assertNotIn(self.A_BET["claim"], self.notebook.visitor().get("/export.txt").body)
+
+    def test_one_key_writes_the_draft_once(self):
+        visitor = self.notebook.visitor()
+        visitor.post("/propose", self.A_BET)
+        sent = visitor.post(
+            "/propose/sign", dict(self.A_BET, email="twice@example.org"),
+            csrf_from="/propose",
+        )
+        key = self.key_from(sent)
+        self.assertEqual(visitor.get(key).status, 303)
+        spent = visitor.get(key)          # the same key again
+        self.assertEqual(spent.status, 400)
+        self.assertEqual(self.notebook.visitor().get("/").body.count(self.A_BET["claim"]), 1)
+
+    def test_second_thoughts_do_not_throw_the_writing_away(self):
+        visitor = self.notebook.visitor()
+        step = visitor.post("/propose", self.A_BET)
+        self.assertIn("Go back and change it", step.body)
+
+        back = visitor.post("/propose", dict(self.A_BET, again="1"))
+        self.assertEqual(back.status, 200)
+        self.assertIn("Propose a bet", back.body)
+        self.assertIn(self.A_BET["claim"], back.body)
+        self.assertIn(self.A_BET["reasoning"], back.body)
+        self.assertIn('value="2032"', back.body)
+        self.assertIn('value="everyday life" checked', back.body)
+
+    def test_a_bet_that_will_not_do_is_refused_before_the_address_is_asked_for(self):
+        reply = self.notebook.visitor().post("/propose", dict(self.A_BET, claim="too short"))
+        self.assertEqual(reply.status, 400)
+        self.assertIn("a whole claim", reply.body)
+        self.assertNotIn("One last thing", reply.body)
+
+    def test_the_bet_is_checked_again_when_the_address_arrives(self):
+        """The hidden fields come back from a visitor like anything else."""
+        visitor = self.notebook.visitor()
+        visitor.post("/propose", self.A_BET)
+        tampered = dict(self.A_BET, claim="x", email="tamper@example.org")
+        reply = visitor.post("/propose/sign", tampered, csrf_from="/propose")
+        self.assertEqual(reply.status, 400)
+        self.assertNotIn("A key has been posted", reply.body)
+
+    def test_an_invented_subject_does_not_survive_the_last_step(self):
+        visitor = self.notebook.visitor()
+        visitor.post("/propose", self.A_BET)
+        reply = visitor.post(
+            "/propose/sign",
+            dict(self.A_BET, subject="something invented", email="invented@example.org"),
+            csrf_from="/propose",
+        )
+        self.assertEqual(reply.status, 400)
+        self.assertIn("Pick a subject", reply.body)
 
 
 # --- csrf -----------------------------------------------------------------
@@ -736,12 +1025,12 @@ class TestGuards(NotebookTestCase):
         """The page you came from is attacker-shaped: it must never be
         copied into a reply header as it arrived."""
         visitor = self.notebook.visitor()
-        page = visitor.get("/bet/1")
+        page = visitor.get("/bet/10")
         csrf = token_on(page.body)
         cookies = "; ".join("%s=%s" % (c.name, c.value) for c in visitor.jar)
         body = urllib.parse.urlencode({"csrf": csrf})
         raw = self.notebook.raw(
-            "POST /bet/1/vote HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n"
+            "POST /bet/10/vote HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n"
             "Cookie: %s\r\n"
             "Referer: %s/\r\n\tX-Injected: yes\r\n"
             "Content-Type: application/x-www-form-urlencoded\r\n"
@@ -755,18 +1044,21 @@ class TestGuards(NotebookTestCase):
         for path in ("/static/../app.py", "/static/../../etc/passwd", "/static/%2e%2e/app.py"):
             self.assertEqual(self.notebook.visitor().get(path).status, 404, path)
 
-    def _vote_carrying(self, anon_cookie):
+    def _vote_carrying(self, anon_cookie, bet=11):
+        """Mark an entry with a cookie no notebook would have minted. An
+        entry of its own each time: one address marks a bet once, and what
+        is being tested here is the header, not the tally."""
         visitor = self.notebook.visitor()
-        page = visitor.get("/bet/1")
+        page = visitor.get("/bet/%d" % bet)
         csrf = token_on(page.body)
         jar = "; ".join("%s=%s" % (c.name, c.value) for c in visitor.jar)
         body = urllib.parse.urlencode({"csrf": csrf})
         return self.notebook.raw(
-            "POST /bet/1/vote HTTP/1.1\r\nHost: x\r\n"
+            "POST /bet/%d/vote HTTP/1.1\r\nHost: x\r\n"
             "Cookie: %s; notebook_anon=%s\r\n"
             "Content-Type: application/x-www-form-urlencoded\r\n"
             "Content-Length: %d\r\nConnection: close\r\n\r\n%s"
-            % (jar, anon_cookie, len(body), body)
+            % (bet, jar, anon_cookie, len(body), body)
         )
 
     def test_a_cookie_cannot_write_extra_attributes_into_the_reply(self):
@@ -776,7 +1068,7 @@ class TestGuards(NotebookTestCase):
         self.assertNotIn("evil.example", head)
 
     def test_a_cookie_of_any_size_is_not_written_into_the_ledger(self):
-        reply = self._vote_carrying("B" * 5000)
+        reply = self._vote_carrying("B" * 5000, bet=12)
         self.assertTrue(reply.startswith("HTTP/1.1 303"), reply[:60])
         # whatever was stored, it is one of our own tokens, not their 5000
         planted = [
@@ -791,6 +1083,10 @@ class TestTheRateLimiterCannotBeHandedToTheVisitor(NotebookTestCase):
     """X-Forwarded-For is written by whoever is talking to us, and appended
     to by each hop. Reading the first entry lets a visitor pick their own
     bucket and sign-in limits stop meaning anything."""
+
+    # This notebook believes it is behind the Fly edge; the one below is
+    # not, and must therefore believe nothing it is told.
+    env = {"FLY_APP_NAME": "notebook-test"}
 
     def post_enter(self, email, header):
         visitor = self.notebook.visitor()
@@ -829,6 +1125,27 @@ class TestTheRateLimiterCannotBeHandedToTheVisitor(NotebookTestCase):
         self.assertEqual(
             self.post_enter("edgetwo@example.org", "Fly-Client-IP: 203.0.113.8"), 200
         )
+
+
+class TestTheEdgeHeaderIsNotBelievedOffTheEdge(
+    TestTheRateLimiterCannotBeHandedToTheVisitor
+):
+    """Off Fly, nothing trusted overwrites Fly-Client-IP, so anyone may
+    write it. Believing it there would hand over the rate limiter - and,
+    since an anonymous mark is counted by address, the ballot box."""
+
+    env = {}
+
+    def test_a_made_up_edge_header_does_not_buy_a_fresh_allowance(self):
+        codes = [
+            self.post_enter("offedge%d@example.org" % i, "Fly-Client-IP: 9.9.9.%d" % i)
+            for i in range(22)
+        ]
+        self.assertIn(429, codes, "a made-up Fly-Client-IP bought a fresh allowance")
+
+    # The two inherited tests belong to the notebook that is behind an edge.
+    test_the_edge_is_still_believed_when_it_speaks = None
+    test_a_made_up_forwarding_header_does_not_buy_a_fresh_allowance = None
 
 
 class TestSecureCookies(unittest.TestCase):

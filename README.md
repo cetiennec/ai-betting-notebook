@@ -18,7 +18,7 @@ mail goes out over `smtplib` or into a local outbox folder.
 ## Run it
 
 ```sh
-python3 app.py seed        # optional: twelve example bets by three example hands
+python3 app.py seed        # optional: a dozen example bets by three example hands
 python3 app.py             # http://localhost:8420
 ```
 
@@ -39,14 +39,15 @@ python3 test_notebook.py                     # the tests; -v to name each one
 
 | | |
 |---|---|
-| **Propose** | a claim, the reasoning behind it, a subject, and the year by which it should be judged. A hand writing its first bet gets the house rules in short above the form, once |
-| **Mark** | one "interesting" mark per bet, toggleable; the ledger sorts by it. No account needed — a signed-in mark is tied to your user, an anonymous one to a browser cookie |
+| **Propose** | a claim, the reasoning behind it, a subject, and the year by which it should be judged. A hand writing its first bet gets the house rules in short above the form, once. **No account first**: a stranger writes the bet, and only the last step asks for an address — the bet waits against the key that is posted out and reaches the ledger when that key is opened, never before |
+| **Mark** | one "interesting" mark per bet, toggleable; the ledger sorts by it. No account needed — a signed-in mark is tied to your user, an anonymous one to the address it came from, with the cookie saying which browser may take it back. One anonymous mark per bet per address, so a household shares one and a swept cookie buys nothing. A mark made before signing in follows the hand in |
 | **Change** | the hand that wrote a bet can correct it while it is open. The ledger keeps every earlier wording in full; the page shows only what moved, struck for what went and underlined for what came. A hand may correct itself, but not quietly |
 | **Settle** | the author records how it turned out, with a line on why. A settled bet is left as it was written |
-| **Subjects** | twelve of them, from education and work & economy to war & security and love & friendship. A bet may carry up to three: some genuinely sit at a crossroads, and filing a malpractice claim under *health & medicine* alone loses whoever went looking under *law & rights* |
+| **Subjects** | thirteen of them, from education and work & economy to energy & infrastructure and love & friendship. A bet may carry up to three: some genuinely sit at a crossroads, and filing a malpractice claim under *health & medicine* alone loses whoever went looking under *law & rights* |
 | **Search** | one box for words, a box beside it for the subject; both combine with standing and order. Every subject is also a page of its own at `/subject/<name>`, listed at `/subjects` |
 | **Sign in** | email only. A one-shot key, valid an hour, and a session that lasts ninety days |
-| **Pen name** | shown or hidden, as a standing preference at your desk or per bet. Your address is never shown either way |
+| **Pen name** | shown or hidden, as a standing preference at your desk or per bet. Nothing checks it: pick a stupid one if you would rather be nobody. Your address is never shown either way |
+| **Pass it on** | plain links on a bet page to X, Bluesky, Facebook, LinkedIn, WhatsApp and email, each with the claim and the year already written out, plus a copy-link button. Nothing third-party loads on the page: no script, no counter, no pixel |
 | **Print** | *your copies*, at your desk: your own bets, the ones you backed, or the whole ledger — as a print sheet or plain text |
 | **Yearly letter** | opt in at your desk: one letter a year with your bets, the ones you backed, and which have come due |
 | **House rules** | `/house` — what the place is for, what makes a good entry, and what gets struck out |
@@ -139,10 +140,30 @@ rsvg-convert -w 1200 -h 630 -o static/card.png static/card.svg
 It is built for one machine and a handful of people, and it is honest about
 which of its guarantees are real:
 
-- **An anonymous mark is a cookie.** Clearing it marks again — the deliberate
-  trade for letting people weigh in without an account. It is not free: one
-  address may be handed only a few new anonymous hands a day
-  (`app.ANON_HANDS_PER_IP`), so a broom is tedious rather than a ballot box.
+- **An anonymous mark is an address.** A bet takes one anonymous mark per IP:
+  sweeping the cookies and marking again is refused, not counted. The cookie is
+  still what says *which browser* holds that mark and may take it back. Two
+  costs, both deliberate: a household, an office or a campus is one address, so
+  they get one anonymous mark between them (signing in is the way past it, and
+  the refusal page says so), and an address that changes leaves a mark its
+  owner can no longer reach. On top of that, one address may still be handed
+  only a few new anonymous hands a day (`app.ANON_HANDS_PER_IP`).
+- **The address is a hash, not a list of addresses.** Marks keep
+  `hmac(house secret, ip)`, the secret minted into the ledger on first use, so
+  nothing exported, printed or backed up reads as a record of who came from
+  where. It is not a promise of the impossible: there are only four billion
+  IPv4 addresses and the secret lives in the same file, so whoever holds the
+  database could work back. A signed-in mark keeps no address at all.
+- **Who the address comes from.** The notebook says which source it is using
+  in its startup lines — get this wrong behind a proxy and every visitor
+  arrives as the same address, which now means one anonymous mark per bet for
+  the whole world. `Fly-Client-IP` is believed only when
+  `FLY_APP_NAME` or `NOTEBOOK_TRUST_EDGE=1` says the notebook is really
+  running behind that edge (`fly.toml` sets the latter), and
+  `X-Forwarded-For` only with `NOTEBOOK_TRUST_FORWARDED=1` behind a proxy that
+  overwrites it. With nothing in front, the socket is the only address worth
+  believing: off an edge, a header is written by whoever is talking to us, and
+  believing one would hand over the rate limiter and the ballot box together.
 - **It runs on `ThreadingHTTPServer`**, which is fine at this size and is not
   a real WSGI server.
 - **A notebook on an `https://` address will not open without `SMTP_HOST`.**

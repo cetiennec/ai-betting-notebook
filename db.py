@@ -4,6 +4,8 @@ A single SQLite file under data/. No ORM, no migrations framework: the schema
 is created if missing and that is the whole story for a prototype.
 """
 
+import hashlib
+import hmac
 import os
 import sqlite3
 import secrets
@@ -39,6 +41,7 @@ CATEGORIES = [
     "everyday life",
     "war & security",
     "climate & environment",
+    "energy & infrastructure",
     "law & rights",
     "love & friendship",
 ]
@@ -74,6 +77,21 @@ CREATE TABLE IF NOT EXISTS sessions (
     created_at TEXT NOT NULL
 );
 
+-- A bet written before its hand had any name here. It waits against the
+-- key that was posted out, and is copied into the ledger the moment that
+-- key is opened - so nothing appears in public until somebody has proved
+-- they hold the address it was written from. An unopened key's draft is
+-- swept up with the key.
+CREATE TABLE IF NOT EXISTS drafts (
+    token      TEXT PRIMARY KEY,
+    claim      TEXT NOT NULL,
+    reasoning  TEXT NOT NULL DEFAULT '',
+    subjects   TEXT NOT NULL,            -- '|' apart, the main one first
+    horizon    INTEGER NOT NULL,
+    anonymous  INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS bets (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id    INTEGER NOT NULL REFERENCES users(id),
@@ -95,8 +113,20 @@ CREATE TABLE IF NOT EXISTS votes (
     bet_id     INTEGER NOT NULL REFERENCES bets(id) ON DELETE CASCADE,
     user_id    INTEGER REFERENCES users(id),
     anon_id    TEXT,
+    -- Where an anonymous mark came from, under the house secret: one
+    -- address may mark a bet once, whatever it does with its cookies.
+    -- Null on a signed-in mark - an account is already one hand, and two
+    -- people in a house with two accounts are two of them.
+    ip_hash    TEXT,
     created_at TEXT NOT NULL,
     CHECK ((user_id IS NULL) <> (anon_id IS NULL))
+);
+
+-- Small things the house keeps to itself. One row, so far: the secret the
+-- addresses are hashed under.
+CREATE TABLE IF NOT EXISTS house (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS rate_limits (
@@ -146,6 +176,10 @@ VOTE_INDEXES = """
 CREATE INDEX IF NOT EXISTS idx_votes_bet ON votes(bet_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_votes_user ON votes(bet_id, user_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_votes_anon ON votes(bet_id, anon_id);
+-- Nulls are distinct in SQLite, so this binds the anonymous marks and
+-- leaves every signed-in one (ip_hash null) alone. It is the rule itself,
+-- not a hint: the check in toggle_vote is the polite way to find out.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_votes_address ON votes(bet_id, ip_hash);
 """
 
 
@@ -208,6 +242,12 @@ def _migrate(conn):
             )
 
     cols = [row[1] for row in conn.execute("PRAGMA table_info(votes)").fetchall()]
+    if cols and "anon_id" in cols and "ip_hash" not in cols:
+        # Marks cast before addresses were counted keep a null address:
+        # they bind nobody, which is the only honest thing to do with a
+        # question that was never asked.
+        with conn:
+            conn.execute("ALTER TABLE votes ADD COLUMN ip_hash TEXT")
     if cols and "anon_id" not in cols:
         with conn:
             conn.execute("ALTER TABLE votes RENAME TO votes_old")
@@ -315,6 +355,46 @@ def spend_login_token(conn, token):
     with conn:
         conn.execute("UPDATE login_tokens SET used_at = ? WHERE token = ?", (stamp(), token))
     return row["email"]
+
+
+def keep_draft(conn, token, claim, reasoning, subjects, horizon, anonymous):
+    """Hold a bet against the key that was just posted out."""
+    with conn:
+        # Keys go stale in an hour; the drafts behind unopened ones have
+        # no reason to outlive them.
+        conn.execute(
+            """DELETE FROM drafts WHERE token IN
+                 (SELECT token FROM login_tokens
+                   WHERE used_at IS NOT NULL OR created_at < ?)""",
+            (stamp(now() - timedelta(minutes=LOGIN_TOKEN_MINUTES)),),
+        )
+        conn.execute(
+            """INSERT OR REPLACE INTO drafts
+                 (token, claim, reasoning, subjects, horizon, anonymous, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (token, claim, reasoning, "|".join(subjects), horizon,
+             1 if anonymous else 0, stamp()),
+        )
+
+
+def write_draft(conn, token, user_id):
+    """Write the bet that was waiting on this key into the ledger.
+
+    Returns the entry number, or None if that key carried no draft. The
+    draft is taken out of the way first: a key is spent once, and a bet
+    that arrived twice would be two entries saying the same thing."""
+    row = conn.execute("SELECT * FROM drafts WHERE token = ?", (token,)).fetchone()
+    if row is None:
+        return None
+    with conn:
+        conn.execute("DELETE FROM drafts WHERE token = ?", (token,))
+    subjects = clean_subjects(row["subjects"].split("|"))
+    if not subjects:
+        return None
+    return create_bet(
+        conn, user_id, row["claim"], row["reasoning"], subjects,
+        row["horizon"], row["anonymous"],
+    )
 
 
 def new_session(conn, user_id):
@@ -542,29 +622,114 @@ def resolve_bet(conn, bet_id, user_id, status, verdict):
         )
 
 
-def toggle_vote(conn, bet_id, user_id=None, anon_id=None):
+def address_hash(conn, address):
+    """An address as the ledger keeps it: never itself, only a hash of it
+    under a secret minted here and kept in this file.
+
+    This is not a promise that an address cannot be recovered - there are
+    only four billion of them and the secret sits in the same database, so
+    whoever holds the file could work back. It is a promise that the
+    ledger does not *read* as a list of addresses: nothing exported,
+    printed, backed up or glanced at over a shoulder shows one."""
+    address = (address or "").strip()
+    if not address:
+        return None
+    return hmac.new(
+        house_secret(conn, "vote_salt").encode(), address.encode(), hashlib.sha256
+    ).hexdigest()[:32]
+
+
+def house_secret(conn, key):
+    """A secret the house keeps, minted on first use and never again."""
+    row = conn.execute("SELECT value FROM house WHERE key = ?", (key,)).fetchone()
+    if row:
+        return row["value"]
+    minted = secrets.token_urlsafe(32)
+    with conn:
+        conn.execute("INSERT OR IGNORE INTO house (key, value) VALUES (?, ?)", (key, minted))
+    return conn.execute("SELECT value FROM house WHERE key = ?", (key,)).fetchone()["value"]
+
+
+# What became of a mark: the three things toggle_vote can honestly say.
+MARKED, WITHDRAWN, TAKEN = "marked", "withdrawn", "taken"
+
+
+def toggle_vote(conn, bet_id, user_id=None, anon_id=None, ip_hash=None):
     """Exactly one of user_id / anon_id identifies the voter.
 
-    Anonymous votes are not deduplicated beyond the cookie: anyone who
-    clears cookies or opens another browser can vote again. That is a
-    deliberate trade for letting people without an account weigh in at
-    all - see README. What stops it being free is upstream, where a new
-    anonymous hand is handed out (app.ANON_HANDS_PER_IP).
+    A signed-in hand marks a bet once, keyed to the account. An anonymous
+    one is keyed to the cookie *and* to the address it came from: the
+    cookie says which browser owns the mark, so the person who made it can
+    take it back, and the address says a bet may only take one anonymous
+    mark from it. Clearing cookies and marking again is therefore no
+    longer a second vote - it is TAKEN, and the caller says so.
+
+    The cost, which is not small: a household, an office and a campus are
+    one address each, so they get one anonymous mark between them. Signing
+    in is the way past that, and the refusal page says so.
+
+    Returns MARKED, WITHDRAWN or TAKEN.
     """
     assert (user_id is None) != (anon_id is None)
     column, value = ("user_id", user_id) if user_id is not None else ("anon_id", anon_id)
     row = conn.execute(
         "SELECT 1 FROM votes WHERE bet_id = ? AND %s = ?" % column, (bet_id, value)
     ).fetchone()
-    with conn:
-        if row:
+    if row:
+        with conn:
             conn.execute("DELETE FROM votes WHERE bet_id = ? AND %s = ?" % column, (bet_id, value))
-        else:
+        return WITHDRAWN
+    # Their own mark comes first: taking one back is never refused, only
+    # the making of a new one is weighed against the address.
+    if user_id is None and ip_hash and marked_from(conn, bet_id, ip_hash):
+        return TAKEN
+    try:
+        with conn:
             conn.execute(
-                "INSERT INTO votes (bet_id, %s, created_at) VALUES (?, ?, ?)" % column,
-                (bet_id, value, stamp()),
+                "INSERT INTO votes (bet_id, %s, ip_hash, created_at) VALUES (?, ?, ?, ?)" % column,
+                (bet_id, value, ip_hash if user_id is None else None, stamp()),
             )
-    return not row
+    except sqlite3.IntegrityError:
+        # Two marks from one address arriving at once: the index is the
+        # rule, the check above only the polite way to hear about it.
+        return TAKEN
+    return MARKED
+
+
+def marked_from(conn, bet_id, ip_hash):
+    """Has this bet already taken an anonymous mark from this address?"""
+    if not ip_hash:
+        return False
+    return conn.execute(
+        "SELECT 1 FROM votes WHERE bet_id = ? AND ip_hash = ?", (bet_id, ip_hash)
+    ).fetchone() is not None
+
+
+def adopt_anon_votes(conn, user_id, anon_id):
+    """Marks made before signing in follow the hand in.
+
+    Without this, marking a bet from the cookie and then signing in left
+    two marks on it from one person: the tally counted both, and the
+    button - which reads the cookie's mark - offered to take back a mark
+    that the press of it would not touch. One hand, one mark, whichever
+    door it came in by.
+
+    The address is dropped along with the cookie: the mark now belongs to
+    an account, so it has no business holding the household's one
+    anonymous place on that bet."""
+    if not anon_id:
+        return 0
+    with conn:
+        conn.execute(
+            """DELETE FROM votes WHERE anon_id = ?
+                 AND bet_id IN (SELECT bet_id FROM votes WHERE user_id = ?)""",
+            (anon_id, user_id),
+        )
+        cur = conn.execute(
+            "UPDATE votes SET user_id = ?, anon_id = NULL, ip_hash = NULL WHERE anon_id = ?",
+            (user_id, anon_id),
+        )
+    return cur.rowcount
 
 
 def category_counts(conn):

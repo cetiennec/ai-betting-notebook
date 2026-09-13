@@ -9,6 +9,11 @@ primary_region = 'cdg'
 [build]
 [env]
   PORT = '8420'
+  # Fly's proxy overwrites Fly-Client-IP, so it is the visitor's real
+  # address here and the notebook may count marks by it. Said out loud
+  # rather than left to FLY_APP_NAME: if this were ever wrong, every
+  # visitor would arrive as the proxy and share one anonymous mark.
+  NOTEBOOK_TRUST_EDGE = '1'
 
 [[mounts]]
   source = 'notebook_data'

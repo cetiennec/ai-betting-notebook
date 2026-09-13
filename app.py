@@ -46,6 +46,31 @@ SECURE_COOKIES = BASE_URL.startswith("https://")
 # Set this only when a proxy you trust is in front and rewrites the
 # forwarding header itself. Fly is recognised without it.
 TRUST_FORWARDED = os.environ.get("NOTEBOOK_TRUST_FORWARDED") == "1"
+# Fly sets FLY_APP_NAME in every machine it runs, and nothing else does;
+# NOTEBOOK_TRUST_EDGE=1 says the same thing out loud, for a deployment
+# that would rather not rest on the platform naming itself. The edge
+# header is only worth believing when we are really behind that edge:
+# off it, anyone may write Fly-Client-IP, and an address now carries a
+# vote as well as a rate limit. Getting this wrong is expensive in one
+# direction only - every visitor then arrives as the same address, and a
+# bet takes one anonymous mark from the whole world.
+ON_FLY = (
+    bool(os.environ.get("FLY_APP_NAME"))
+    or os.environ.get("NOTEBOOK_TRUST_EDGE") == "1"
+)
+
+
+def address_source():
+    """Where client_ip reads a visitor's address from, in one phrase.
+
+    Worth saying out loud at startup: get this wrong behind a proxy and
+    every visitor arrives as the same address, which now means one
+    anonymous mark per bet for the whole world."""
+    if ON_FLY:
+        return "the Fly edge (Fly-Client-IP)"
+    if TRUST_FORWARDED:
+        return "the last hop of X-Forwarded-For"
+    return "the socket - no proxy header is believed"
 is_keeper = db.is_keeper  # who may keep the ledger; see NOTEBOOK_KEEPERS
 
 
@@ -243,13 +268,15 @@ class Notebook(BaseHTTPRequestHandler):
 
         A forwarding header is written by whoever is talking to us, so it
         is only worth anything when something trusted sits in front and
-        overwrites it. Fly does that with Fly-Client-IP. Behind any other
+        overwrites it. Fly does that with Fly-Client-IP, and is believed
+        only when FLY_APP_NAME says we are running there. Behind any other
         proxy, say so with NOTEBOOK_TRUST_FORWARDED=1 and the last hop of
         X-Forwarded-For is used - the entry that proxy appended, not the
         ones the visitor chose. With nothing in front, the only address
         worth believing is the one the socket came from: believing a
-        header there would hand the rate limiter to the visitor."""
-        edge = self.headers.get("Fly-Client-IP")
+        header there would hand the rate limiter, and now the ballot box,
+        to the visitor."""
+        edge = self.headers.get("Fly-Client-IP") if ON_FLY else None
         if edge:
             return edge.strip()
         if TRUST_FORWARDED:
@@ -321,12 +348,13 @@ class Notebook(BaseHTTPRequestHandler):
             if path.startswith("/bet/") and path.endswith("/revise"):
                 return self.page_revise(conn, user, path.split("/")[2])
             if path.startswith("/bet/"):
-                return self.page_bet(conn, user, path.split("/")[2])
+                return self.page_bet(conn, user, path.split("/")[2], args)
             if path == "/propose":
-                if not user:
-                    return self.go("/enter")
+                # No sign-in first: the address is asked for at the end,
+                # when there is a bet to sign. See post_propose.
                 return self.reply(render.propose_page(
-                    user, self.csrf_token(), first_time=not db.has_written(conn, user["id"])
+                    user, self.csrf_token(),
+                    first_time=not user or not db.has_written(conn, user["id"]),
                 ))
             if path == "/enter":
                 return self.reply(render.enter_page(self.csrf_token()))
@@ -395,6 +423,8 @@ class Notebook(BaseHTTPRequestHandler):
                 return self.post_enter(conn, form)
             if path == "/propose":
                 return self.post_propose(conn, user, form)
+            if path == "/propose/sign":
+                return self.post_propose_sign(conn, user, form)
             if path == "/desk":
                 return self.post_desk(conn, user, form)
             if path.startswith("/bet/") and path.endswith("/vote"):
@@ -442,7 +472,8 @@ class Notebook(BaseHTTPRequestHandler):
             return self.reply(
                 render.message_page(
                     "No such subject",
-                    "The notebook keeps twelve of them.", user, link="/subjects",
+                    "The notebook keeps %d of them." % len(db.CATEGORIES),
+                    user, link="/subjects",
                 ),
                 404,
             )
@@ -457,7 +488,7 @@ class Notebook(BaseHTTPRequestHandler):
             )
         )
 
-    def page_bet(self, conn, user, raw_id):
+    def page_bet(self, conn, user, raw_id, args=None):
         if not raw_id.isdigit():
             return self.reply(render.message_page("A blank page", "No such entry."), 404)
         # A struck entry is gone for everyone but the keeper, who may still
@@ -469,9 +500,18 @@ class Notebook(BaseHTTPRequestHandler):
             return self.reply(
                 render.message_page("A torn page", "That entry is not in the ledger.", user), 404
             )
+        note = ""
+        if (args or {}).get("welcome") and user:
+            # Arrived here straight from the key that wrote it.
+            note = (
+                '<div class="notice plain">Your bet is in the ledger, and the notebook '
+                "is open to you. You are writing as <b>%s</b> &mdash; change the name, or "
+                "hide it, at <a href='/desk'>your desk</a>.</div>"
+                % render.e(user["pseudo"])
+            )
         return self.reply(
             render.bet_page(
-                bet, user, self.csrf_token(),
+                bet, user, self.csrf_token(), note,
                 earlier=db.revisions(conn, bet["id"]) if bet["revisions"] else [],
             )
         )
@@ -549,8 +589,8 @@ class Notebook(BaseHTTPRequestHandler):
             (BASE_URL + "/subjects", "weekly"),
             (BASE_URL + "/house", "monthly"),
         ]
-        # A page per subject: twelve ways in for a reader, and twelve more
-        # corners of the ledger for a crawler that only ever sees the front.
+        # A page per subject: one more way in for a reader, and one more
+        # corner of the ledger for a crawler that only ever sees the front.
         pages += [
             ("%s/subject/%s" % (BASE_URL, db.subject_slug(c)), "weekly")
             for c in db.CATEGORIES
@@ -653,39 +693,44 @@ class Notebook(BaseHTTPRequestHandler):
     # --- actions ----------------------------------------------------------
 
     def post_enter(self, conn, form):
-        email = form.get("email", "").strip().lower()
+        return self.post_key(
+            conn, form.get("email", "").strip().lower(),
+            lambda why, code: self.reply(
+                render.enter_page(self.csrf_token(), error=why), code
+            ),
+        )
+
+    def post_key(self, conn, email, refuse, draft=None):
+        """Mint a key for an address and post it out.
+
+        `refuse` turns a complaint into whichever page the visitor is
+        standing on - the sign-in form, or the last step of writing a bet.
+        `draft` is a bet held against the key until it is opened."""
         if not mail.looks_like_email(email):
-            return self.reply(
-                render.enter_page(self.csrf_token(), error="That does not look like an address."), 400
-            )
+            return refuse("That does not look like an address.", 400)
         overbusy = (
             db.rate_limited(conn, "enter-ip:%s" % self.client_ip(), 20, 15)
             or db.rate_limited(conn, "enter-email:%s" % email, 5, 15)
         )
         if overbusy:
-            return self.reply(
-                render.enter_page(
-                    self.csrf_token(),
-                    error="Too many keys asked for. Wait a few minutes and try again.",
-                ),
-                429,
-            )
+            return refuse("Too many keys asked for. Wait a few minutes and try again.", 429)
         token = db.new_login_token(conn, email)
+        if draft:
+            db.keep_draft(
+                conn, token, draft["claim"], draft["reasoning"], draft["subjects"],
+                int(draft["horizon"]), draft["anonymous"],
+            )
         url = "%s/enter/%s" % (BASE_URL, quote(token))
         sent = mail.send_login_link(email, url)
         if mail.using_real_smtp() and not sent:
-            return self.reply(
-                render.enter_page(
-                    self.csrf_token(),
-                    error="The key could not be posted just now. Please try again shortly.",
-                ),
-                503,
-            )
+            return refuse("The key could not be posted just now. Please try again shortly.", 503)
         # The link is only ever shown on the page when nothing was really
         # emailed - once real mail is configured, proving you hold the
         # inbox is the whole point, so the key must go there and nowhere else.
         shortcut = None if mail.using_real_smtp() else url
-        return self.reply(render.enter_page(self.csrf_token(), sent_to=email, link=shortcut))
+        return self.reply(render.enter_page(
+            self.csrf_token(), sent_to=email, link=shortcut, keeping=bool(draft)
+        ))
 
     def claim_key(self, conn, token):
         email = db.spend_login_token(conn, token)
@@ -697,7 +742,17 @@ class Notebook(BaseHTTPRequestHandler):
                 400,
             )
         user = db.user_by_email(conn, email) or db.create_user(conn, email)
-        return self.go("/?welcome=1", cookie=db.new_session(conn, user["id"]))
+        # Whatever they marked before signing in is theirs, not a second
+        # anonymous hand's: carry it in with them.
+        db.adopt_anon_votes(conn, user["id"], self.anon_id())
+        session = db.new_session(conn, user["id"])
+        # And whatever they wrote before signing in goes into the ledger
+        # now that the key has shown whose hand it is.
+        bet_id = db.write_draft(conn, token, user["id"])
+        if bet_id:
+            db.toggle_vote(conn, bet_id, user["id"])  # you back your own bet
+            return self.go("/bet/%d?welcome=1" % bet_id, cookie=session)
+        return self.go("/?welcome=1", cookie=session)
 
     # --- changing a bet you wrote ------------------------------------------
 
@@ -759,9 +814,36 @@ class Notebook(BaseHTTPRequestHandler):
         )
         return self.go("/bet/%d" % bet["id"])
 
+    def bet_as_written(self, form):
+        """The bet on a propose form, as it arrived."""
+        return {
+            "claim": form.get("claim", "").strip(),
+            "reasoning": form.get("reasoning", "").strip()[:MAX_REASONING],
+            "subjects": db.clean_subjects(self.every("subject")),
+            "horizon": form.get("horizon", "").strip(),
+            "anonymous": bool(form.get("anonymous")),
+        }
+
     def post_propose(self, conn, user, form):
         if not user:
-            return self.go("/enter")
+            # Written by somebody with no name here yet: check it as
+            # carefully as any other, then ask for the address last.
+            written = self.bet_as_written(form)
+            if form.get("again"):
+                # Second thoughts on the way to the address step: the same
+                # form back, with every word of it still in place.
+                return self.reply(
+                    render.propose_page(None, self.csrf_token(), written, first_time=True)
+                )
+            trouble = bet_trouble(written["claim"], written["subjects"], written["horizon"])
+            if trouble:
+                return self.reply(
+                    render.propose_page(
+                        None, self.csrf_token(), written, trouble, first_time=True
+                    ),
+                    400,
+                )
+            return self.reply(render.sign_off_page(self.csrf_token(), written))
         claim = form.get("claim", "").strip()
         reasoning = form.get("reasoning", "").strip()
         subjects = db.clean_subjects(self.every("subject"))
@@ -786,11 +868,36 @@ class Notebook(BaseHTTPRequestHandler):
         db.toggle_vote(conn, bet_id, user["id"])  # you back your own bet
         return self.go("/bet/%d" % bet_id)
 
+    def post_propose_sign(self, conn, user, form):
+        """An address for a bet already written. The bet comes back in
+        hidden fields and is checked again here: it arrived from a visitor
+        either way, and our own form is no warrant for anything."""
+        if user:   # signed in in another tab while writing; no key needed
+            return self.post_propose(conn, user, form)
+        written = self.bet_as_written(form)
+        trouble = bet_trouble(written["claim"], written["subjects"], written["horizon"])
+        if trouble:
+            return self.reply(
+                render.propose_page(None, self.csrf_token(), written, trouble, first_time=True),
+                400,
+            )
+        return self.post_key(
+            conn, form.get("email", "").strip().lower(),
+            lambda why, code: self.reply(
+                render.sign_off_page(self.csrf_token(), written, error=why), code
+            ),
+            draft=written,
+        )
+
     def post_vote(self, conn, user, raw_id):
         if not raw_id.isdigit() or db.get_bet(conn, int(raw_id)) is None:
             return self.reply(render.message_page("A torn page", "No such entry."), 404)
         anon_cookie = None
         if user:
+            # A hand that marked something before it signed in still has
+            # the cookie in its pocket. Take those marks over before
+            # touching this one, or the same person counts twice.
+            db.adopt_anon_votes(conn, user["id"], self.anon_id())
             db.toggle_vote(conn, int(raw_id), user_id=user["id"])
         else:
             anon = self.anon_id()
@@ -811,7 +918,25 @@ class Notebook(BaseHTTPRequestHandler):
                         429,
                     )
                 anon = secrets.token_urlsafe(16)
-            db.toggle_vote(conn, int(raw_id), anon_id=anon)
+            what = db.toggle_vote(
+                conn, int(raw_id), anon_id=anon,
+                ip_hash=db.address_hash(conn, self.client_ip()),
+            )
+            if what == db.TAKEN:
+                # Somebody at this address has already marked this one and
+                # it was not this browser - a cleared cookie, another
+                # browser, or the person at the next desk.
+                return self.reply(
+                    render.message_page(
+                        "Already marked from here",
+                        "This entry has already been marked once from your address, and "
+                        "an anonymous mark is counted by address. Sign in and your mark "
+                        "is your own - one each, kept for good, wherever you read from.",
+                        user,
+                        link=self.back_to("/bet/%s" % raw_id),
+                    ),
+                    409,
+                )
             anon_cookie = anon  # (re)plant the cookie so this vote is remembered
         return self.go(self.back_to("/bet/%s" % raw_id), anon_cookie=anon_cookie)
 
@@ -854,7 +979,7 @@ class Notebook(BaseHTTPRequestHandler):
 ALSO_ABOUT = {
     "By 2032, a candidate": ["information & trust"],
     "By 2033, refusing": ["law & rights"],
-    "By 2029, data centre": ["politics & governance"],
+    "By 2029, data centre": ["energy & infrastructure", "politics & governance"],
     "By 2029, 'wrote it myself'": ["art & culture"],
     "By 2034, at least three": ["politics & governance"],
 }
@@ -932,7 +1057,8 @@ def serve(port):
     print("\n  The Future with AI betting notebook")
     print("  open  %s" % url)
     print("  ledger at %s" % db.DB_PATH)
-    print("  letters land in %s\n" % mail.OUTBOX)
+    print("  letters land in %s" % mail.OUTBOX)
+    print("  visitors counted by %s\n" % address_source())
     try:
         server.serve_forever()
     except KeyboardInterrupt:

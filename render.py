@@ -4,7 +4,7 @@ import difflib
 import os
 import re
 from html import escape
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 import db
 
@@ -36,7 +36,7 @@ def csrf_field(csrf):
 
 
 def subject_boxes(chosen):
-    """The twelve subjects, to tick. A bet is usually one thing, but some
+    """Every subject, to tick. A bet is usually one thing, but some
     genuinely sit at a crossroads - so up to db.MAX_SUBJECTS of them."""
     chosen = set(chosen or [])
     boxes = "".join(
@@ -139,7 +139,12 @@ def layout(title, body, user=None, wide_footer=True, description="", path=""):
             room += '<a href="/keep">keep the ledger</a>'
     else:
         who = "not signed"
-        room = '<a href="/enter">sign in</a>'
+        # Writing comes before signing: a stranger may take the first door
+        # as readily as the second, and is asked for an address at the end.
+        room = (
+            '<a href="/propose">propose a bet</a>'
+            '<a href="/enter">sign in</a>'
+        )
     room += '<a href="/house">house rules</a>'
     return """<!doctype html>
 <html lang="en">
@@ -200,6 +205,54 @@ def vote_control(bet, user, csrf):
     )
 
 
+# Passing a bet on. Every one of these is a plain link to the platform's
+# own compose page: nothing of theirs loads here, nothing counts who read
+# the page, and pressing the link is the only way anything reaches them.
+# That is the only kind of share button this notebook is willing to carry.
+SHARE_PLACES = (
+    ("X", "https://twitter.com/intent/tweet?text=%(saying)s&url=%(where)s"),
+    ("Bluesky", "https://bsky.app/intent/compose?text=%(both)s"),
+    ("Facebook", "https://www.facebook.com/sharer/sharer.php?u=%(where)s"),
+    ("LinkedIn", "https://www.linkedin.com/sharing/share-offsite/?url=%(where)s"),
+    ("WhatsApp", "https://wa.me/?text=%(both)s"),
+    ("Email", "mailto:?subject=%(subject)s&body=%(both)s"),
+)
+
+
+def share_words(bet):
+    """What goes in the box when the platform opens it: the claim, the
+    year that settles it, and where it is written down. Whoever is
+    sharing can say it better - this is only so nobody has to."""
+    claim = " ".join((bet["claim"] or "").split())
+    where = "%s/bet/%d" % (SITE_URL, bet["id"])
+    return (
+        "\u201c%s\u201d \u2014 a bet on the future with AI, to be judged by %d."
+        % (claim, bet["horizon"]),
+        where,
+    )
+
+
+def share_row(bet):
+    saying, where = share_words(bet)
+    bits = {
+        "saying": quote(saying, safe=""),
+        "where": quote(where, safe=""),
+        "both": quote("%s\n%s" % (saying, where), safe=""),
+        "subject": quote("A bet on the future with AI", safe=""),
+    }
+    links = "".join(
+        '<a class="share" href="%s" target="_blank" rel="noopener nofollow">%s</a>'
+        % (e(pattern % bits), e(name))
+        for name, pattern in SHARE_PLACES
+    )
+    # Hidden until the script that makes it work has run: a button that
+    # copies nothing is worse than no button at all.
+    copy = ('<button type="button" class="share copy-link" hidden'
+            ' data-link="%s">Copy link</button>' % e(where))
+    return ('<div class="share-row no-print"><span class="label">pass it on</span>'
+            "%s%s</div>" % (links, copy))
+
+
 def status_stamp(bet):
     if bet["status"] == "open":
         return ""
@@ -207,10 +260,45 @@ def status_stamp(bet):
     return ' <span class="stamp%s">%s</span>' % (quiet, e(db.STATUSES[bet["status"]]))
 
 
+# How much of the reasoning the ledger shows before it offers the rest.
+# Long enough to carry the thought, short enough that a screenful of
+# entries still reads as a list rather than a wall.
+LEDGER_EXCERPT = 180
+
+
+def shorten(text, limit=LEDGER_EXCERPT, slack=60):
+    """The opening of a piece of reasoning and whatever is left of it.
+
+    Cut at a space, so no word is broken in half, and never at all when
+    the whole thing is short enough to stand as it is - most reasoning is,
+    and an entry that fits has no business wearing a button. The slack is
+    there for the paragraph that runs a line over: folding away twenty
+    words asks more of a reader than it saves them."""
+    text = (text or "").strip()
+    if len(text) <= limit + slack:
+        return text, ""
+    cut = text.rfind(" ", 0, limit)
+    if cut < limit // 2:      # one improbably long word: cut where it falls
+        cut = limit
+    return text[:cut].rstrip(" ,;:-\u2014"), text[cut:].strip()
+
+
 def entry(bet, user, csrf, with_reasoning=True):
     because = ""
     if with_reasoning and bet["reasoning"].strip():
-        because = '<p class="because">%s</p>' % e(bet["reasoning"].strip())
+        opening, rest = shorten(bet["reasoning"])
+        if rest:
+            # A disclosure, not a script: the rest of the reasoning is on
+            # the page already, folded away until it is asked for.
+            because = (
+                '<details class="because">'
+                '<summary>%s<span class="cut">&hellip;</span>'
+                '<span class="fold open">see more</span>'
+                '<span class="fold shut">see less</span></summary>'
+                "<p>%s</p></details>" % (e(opening), e(rest))
+            )
+        else:
+            because = '<p class="because">%s</p>' % e(opening)
     return """<li class="entry">
   %(vote)s
   <div>
@@ -523,6 +611,7 @@ def bet_page(bet, user, csrf, note="", earlier=()):
       <a class="button" href="/">Back to the ledger</a>
     </div>
   </div>
+  %(share)s
   %(earlier)s
   %(verdict)s
   %(resolve)s
@@ -553,6 +642,7 @@ def bet_page(bet, user, csrf, note="", earlier=()):
             if mine and bet["status"] == "open"
             else ""
         ),
+        "share": share_row(bet),
         "earlier": earlier_wording(bet, earlier),
         "verdict": verdict,
         "resolve": resolve,
@@ -594,6 +684,13 @@ def propose_page(user, csrf, values=None, error="", first_time=False):
     lede = FIRST_TIME_RULES if first_time else """<p class="lede">State it so that in ten years a stranger could tell whether you were right.
    A bet is not a banner: what you expect, not what you want &mdash;
    the <a href="/house">house rules</a> put it at more length.</p>"""
+    if not user:
+        # Write first, sign afterwards: an address is what the letter in
+        # ten years needs, and there is no reason to ask for it before
+        # there is anything to sign.
+        lede += """<p class="hint">You are not signed in, and need not be to write this.
+   Write the bet; the last step asks for an address, and the bet goes in
+   under whatever pen name you choose then.</p>"""
     body = """%(note)s
 <h2>Propose a bet</h2>
 %(lede)s
@@ -611,8 +708,9 @@ def propose_page(user, csrf, values=None, error="", first_time=False):
     <input type="number" name="horizon" min="%(min)d" max="%(max)d" value="%(horizon)s" required></label>
   <label class="tick"><input type="checkbox" name="anonymous" value="1"%(anon)s>
     Sign this one with no name, whatever my desk says</label>
-  <div class="deeds"><button type="submit">Write it into the ledger</button></div>
+  <div class="deeds"><button type="submit">%(deed)s</button></div>
 </form>""" % {
+        "deed": "Write it into the ledger" if user else "Write it, then sign it",
         "note": note,
         "lede": lede,
         "csrf": csrf_field(csrf),
@@ -627,7 +725,69 @@ def propose_page(user, csrf, values=None, error="", first_time=False):
     return layout("Propose a bet", body, user)
 
 
-def enter_page(csrf, error="", sent_to="", link=""):
+def sign_off_page(csrf, values, error=""):
+    """The last step of writing a bet you began before signing in.
+
+    The bet itself is carried back in hidden fields and checked again on
+    the way in - nothing here is trusted because it came from our own
+    form. Only the address is new, and it is asked for last, once the
+    writing is done."""
+    note = '<div class="notice">%s</div>' % e(error) if error else ""
+    kept = "".join(
+        '<input type="hidden" name="%s" value="%s">' % (name, e(value))
+        for name, value in (
+            ("claim", values.get("claim", "")),
+            ("reasoning", values.get("reasoning", "")),
+            ("horizon", values.get("horizon", "")),
+        )
+    ) + "".join(
+        '<input type="hidden" name="subject" value="%s">' % e(s)
+        for s in values.get("subjects", [])
+    ) + ('<input type="hidden" name="anonymous" value="1">'
+         if values.get("anonymous") else "")
+
+    body = """%(note)s
+<h2>One last thing</h2>
+<p class="lede">Your bet is written. It is not in the ledger yet &mdash; leave an
+   address and we post you a key; opening it signs the bet in your hand and
+   puts it on the page. No passwords are kept here, and the address is never
+   shown to anyone.</p>
+<div class="bet-sheet quoted">
+  <p class="claim">%(claim)s</p>
+  <p class="colophon">%(subjects)s &middot; to be judged by %(horizon)s</p>
+  %(because)s
+</div>
+<form method="post" action="/propose/sign">
+  %(csrf)s
+  %(kept)s
+  <label class="field"><span class="name">Your address</span>
+    <input type="email" name="email" required placeholder="you@example.org"></label>
+  <div class="deeds"><button type="submit">Post me a key and hold the bet</button></div>
+</form>
+<!-- Going back posts the bet to itself rather than linking to an empty
+     form: what somebody has written is not thrown away by a second
+     thought about the wording. -->
+<form method="post" action="/propose" class="second-thoughts">
+  %(csrf)s
+  %(kept)s
+  <input type="hidden" name="again" value="1">
+  <div class="deeds"><button type="submit">Go back and change it</button></div>
+</form>
+<p class="hint">The key lasts an hour. If it is never opened, the bet is never
+   written &mdash; nothing of it is shown to anyone in the meantime.</p>""" % {
+        "note": note,
+        "csrf": csrf_field(csrf),
+        "kept": kept,
+        "claim": e(values.get("claim", "")),
+        "subjects": " &middot; ".join(e(s) for s in values.get("subjects", [])),
+        "horizon": e(values.get("horizon", "")),
+        "because": ('<div class="because">%s</div>' % e(values["reasoning"].strip())
+                    if values.get("reasoning", "").strip() else ""),
+    }
+    return layout("One last thing", body)
+
+
+def enter_page(csrf, error="", sent_to="", link="", keeping=False):
     if sent_to:
         shortcut = (
             '<p class="hint">This prototype posts nothing to the internet. Your key was'
@@ -636,10 +796,16 @@ def enter_page(csrf, error="", sent_to="", link=""):
             if link
             else ""
         )
+        held = (
+            "<p>Your bet is being held against that key. It goes into the ledger, in "
+            "your hand, the moment the key is opened &mdash; and nowhere at all if it "
+            "is not.</p>" if keeping else ""
+        )
         body = """<div class="notice plain">
   <p>A key has been posted to <b>%s</b>. It opens the notebook once, within the hour.</p>
   %s
-</div>""" % (e(sent_to), shortcut)
+  %s
+</div>""" % (e(sent_to), held, shortcut)
         return layout("Key sent", body)
 
     note = '<div class="notice">%s</div>' % e(error) if error else ""
@@ -689,6 +855,8 @@ def desk_page(user, csrf, mine, backed, note="", error=""):
   %(csrf)s
   <label class="field"><span class="name">Pen name</span>
     <input type="text" name="pseudo" maxlength="32" required value="%(pseudo)s"></label>
+  <p class="hint">Want to be incognito? Pick a stupid one &mdash; we don't care, and
+     nothing here checks. It is a label for your bets, not your name.</p>
   <label class="tick"><input type="checkbox" name="show_pseudo" value="1"%(show)s>
     Show my pen name beside my bets</label>
   <p class="hint">Unticked, every bet of yours reads as an unsigned hand. Your address is
@@ -893,7 +1061,7 @@ def burn_page(user, csrf, bet):
 
 
 def subjects_page(user, counts):
-    """The twelve, as a way in. Plain links, so a reader can browse by
+    """Every subject, as a way in. Plain links, so a reader can browse by
     subject and a crawler can find every corner of the ledger."""
     seen = dict(counts)
     rows = "".join(
@@ -930,7 +1098,7 @@ def subject_page(bets, counts, user, subject, status, sort, csrf):
 <h2>%(subject)s <span class="hint">(%(n)d %(word)s)</span></h2>
 %(ledger)s
 <div class="deeds">
-  <a class="button" href="/subjects">All twelve subjects</a>
+  <a class="button" href="/subjects">All the subjects</a>
   <a class="button" href="/">The whole ledger</a>
   <a class="button" href="/propose">Propose a bet</a>
 </div>""" % {
@@ -982,8 +1150,20 @@ def house_page(user=None):
 <h2>Marking one interesting</h2>
 <p>Anyone may mark a bet interesting, with no account and no name &mdash; it
    is one click, and it says &ldquo;this one is worth watching&rdquo;, not
-   &ldquo;I agree with this&rdquo;. Writing a bet of your own needs a pen
-   name, because a bet has an author and someone has to settle it later.</p>
+   &ldquo;I agree with this&rdquo;.</p>
+<p>A mark with no name behind it is counted by the address it came from: one
+   per entry, so clearing your cookies and marking again does nothing, and a
+   house or an office with one connection has one mark between them on any
+   given bet. Sign in and the mark is yours instead &mdash; one each, kept for
+   good, wherever you read from &mdash; and anything you marked before signing
+   in comes with you.</p>
+
+<h2>Writing one</h2>
+<p>You need not sign in first. Write the bet; the last step asks for an
+   address and posts you a key, and the bet goes into the ledger when you open
+   it &mdash; in your hand, under whatever pen name you pick. A bet has an
+   author because somebody has to settle it later. If the key is never opened,
+   the bet is never written, and nothing of it is shown to anyone.</p>
 
 <h2>What gets struck out</h2>
 <p>Very little, and reluctantly. The ledger is kept by hand, and a line is
@@ -1004,9 +1184,11 @@ def house_page(user=None):
    wrong. That is what a book of wagers looks like.</p>
 
 <h2>Your name and your address</h2>
-<p>You sign with a pen name, which you may change or hide at any time. Your
-   address is never shown to anyone, and is kept for one reason: to post you
-   a key when you sign in, and the yearly letter if you asked for one.</p>
+<p>You sign with a pen name, which you may change or hide at any time. Nothing
+   here checks it against anything: if you would rather be nobody, pick a
+   stupid one. Your address is never shown to anyone, and is kept for one
+   reason: to post you a key when you sign in, and the yearly letter if you
+   asked for one.</p>
 
 <div class="deeds">
   <a class="button" href="/">Back to the ledger</a>
