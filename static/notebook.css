@@ -234,27 +234,48 @@ ol.ledger { list-style: none; margin: 0; padding: 0; }
 .entry.lead .because { font-size: 1rem; }
 .entry.lead .tally .count { font-size: 1.6rem; }
 
-/* A long piece of reasoning shows its opening in the ledger and folds the
-   rest away: ten entries should read as a list, not as a wall. No script
-   for it - a details element is the browser's own disclosure, and the
-   whole text is on the page either way. */
-details.because summary {
-  cursor: pointer;
-  list-style: none;              /* the words are the marker, not a triangle */
+/* Three lines of reasoning in the ledger, and a way to the rest: ten
+   entries should read as a list, not as a wall. The cut counts rendered
+   lines rather than letters, because the same sentence is two lines on a
+   desk and five on a phone - which is a thing only the browser knows.
+   The whole text is on the page either way; the fold is a checkbox, so
+   no script is needed to open it. */
+.because .text {
+  margin: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
 }
-details.because summary::-webkit-details-marker { display: none; }
-details.because summary:focus-visible { outline: 2px solid var(--rubric); outline-offset: 2px; }
-details.because > p { margin: 0.5rem 0 0; }
+.more-toggle {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+}
+.more-toggle:checked ~ .text {
+  -webkit-line-clamp: unset;
+  line-clamp: unset;
+  overflow: visible;
+}
 .fold {
+  display: inline-block;
+  margin-top: 0.2rem;
   font-variant: small-caps;
   letter-spacing: 0.06em;
   color: var(--rubric);
-  margin-left: 0.4rem;
   white-space: nowrap;
+  cursor: pointer;
 }
-details.because .shut, details.because[open] .open { display: none; }
-details.because[open] .shut { display: inline; }
-details.because[open] .cut { display: none; }
+.fold:hover { text-decoration: underline; }
+.more-toggle:focus-visible ~ .fold { outline: 2px solid var(--rubric); outline-offset: 2px; }
+.fold .shut, .more-toggle:checked ~ .fold .open { display: none; }
+.more-toggle:checked ~ .fold .shut { display: inline; }
+/* Set by the one bit of script there is: a reasoning that turned out to
+   fit in three lines is not given a control that would do nothing. */
+.because.fits .fold { display: none; }
 
 /* --- passing a bet on -------------------------------------------------- */
 
@@ -565,7 +586,10 @@ table.hands .n { text-align: right; width: 5rem; }
   border-top: 1px solid var(--rule);
 }
 .bet-foot dl.record { margin-top: 0; }
+/* What you can do with the bet comes last, under the ways of passing it
+   on: the record of it, then who to send it to, then the deeds. */
 .bet-foot .deeds { margin-top: 1.2rem; }
+.bet-foot .share-row { margin-top: 1.2rem; }
 
 /* A grid rather than floats: a long term used to wrap inside its 9rem
    and drag the rest of the page out of line with it. */
@@ -688,16 +712,24 @@ footer.colophon {
   .sift-line {
     display: flex;
     align-items: baseline;
-    gap: 0.4rem;
-    margin: 0.9rem 0 0.2rem;
-    padding-bottom: 0.5rem;
-    border-bottom: 1px solid var(--rule);
+    gap: 0.45rem;
+    margin: 1rem 0 0.2rem;
+    padding: 0.45rem 0.7rem;
+    border: 1px solid var(--rule);
+    background: #f2ede0;
     font-variant: small-caps;
-    letter-spacing: 0.06em;
-    color: var(--ink-faded);
+    letter-spacing: 0.07em;
+    font-size: 0.95rem;
+    color: var(--ink);
     cursor: pointer;
   }
-  .sift-line::before { content: "+"; font-family: var(--mono); color: var(--rubric); }
+  .sift-line::before {
+    content: "+";
+    font-family: var(--mono);
+    font-size: 1.05rem;
+    line-height: 1;
+    color: var(--rubric);
+  }
   .sift-toggle:checked ~ .sift-line::before { content: "\2212"; }
   .sift-toggle:focus-visible ~ .sift-line { outline: 2px solid var(--rubric); outline-offset: 2px; }
   .sift-body { display: none; }
@@ -730,10 +762,14 @@ footer.colophon {
   a { text-decoration: none; color: #000; }
   .entry { border-bottom: 1px solid #999; }
   .entry .because { font-size: 10.5pt; }
-  /* A printed ledger should carry the whole reasoning; the fold is a
-     screen convenience. Browsers differ on whether this opens a closed
-     details, so /print remains the sure way to get it on paper. */
-  details.because > p { display: block !important; }
-  details.because .fold, details.because .cut { display: none !important; }
+  /* A printed ledger carries the whole reasoning; the fold is a screen
+     convenience and the control is not part of the page. */
+  .because .text {
+    display: block;
+    -webkit-line-clamp: unset;
+    line-clamp: unset;
+    overflow: visible;
+  }
+  .fold, .more-toggle { display: none !important; }
   footer.colophon { border-top: 1px solid #000; }
 }

@@ -262,27 +262,36 @@ def status_stamp(bet):
     return ' <span class="stamp%s">%s</span>' % (quiet, e(db.STATUSES[bet["status"]]))
 
 
-# How much of the reasoning the ledger shows before it offers the rest.
-# Long enough to carry the thought, short enough that a screenful of
-# entries still reads as a list rather than a wall.
-LEDGER_EXCERPT = 180
+# Below this, a reasoning cannot run past three lines on any screen the
+# notebook is read on, so it is never given a control it does not need.
+# Above it, whether three lines is a cut at all is a question about the
+# width of the page, which only the browser can answer - the clamp is in
+# the stylesheet and counts rendered lines, not letters. A cut measured in
+# letters is two lines on a desk and five on a phone.
+LEDGER_UNFOLDED = 150
 
 
-def shorten(text, limit=LEDGER_EXCERPT, slack=60):
-    """The opening of a piece of reasoning and whatever is left of it.
+def reasoning_block(bet, folded=True):
+    """The reasoning under a ledger entry: three lines of it, and the way
+    to the rest.
 
-    Cut at a space, so no word is broken in half, and never at all when
-    the whole thing is short enough to stand as it is - most reasoning is,
-    and an entry that fits has no business wearing a button. The slack is
-    there for the paragraph that runs a line over: folding away twenty
-    words asks more of a reader than it saves them."""
-    text = (text or "").strip()
-    if len(text) <= limit + slack:
-        return text, ""
-    cut = text.rfind(" ", 0, limit)
-    if cut < limit // 2:      # one improbably long word: cut where it falls
-        cut = limit
-    return text[:cut].rstrip(" ,;:-\u2014"), text[cut:].strip()
+    The whole text is on the page either way - what the fold changes is
+    how much of it is shown. No script is needed for that: a checkbox and
+    a label do the opening, the same as the search apparatus. What script
+    there is only takes the control away again from an entry whose
+    reasoning turned out to fit, which is a question of pixels and cannot
+    be answered here."""
+    text = bet["reasoning"].strip()
+    if not folded or len(text) <= LEDGER_UNFOLDED:
+        return '<p class="because">%s</p>' % e(text)
+    return (
+        '<div class="because folded">'
+        '<input type="checkbox" id="more-%(id)d" class="more-toggle">'
+        '<p class="text">%(text)s</p>'
+        '<label class="fold" for="more-%(id)d">'
+        '<span class="open">see more</span><span class="shut">see less</span></label>'
+        "</div>" % {"id": bet["id"], "text": e(text)}
+    )
 
 
 def entry(bet, user, csrf, with_reasoning=True, lead=False):
@@ -292,19 +301,7 @@ def entry(bet, user, csrf, with_reasoning=True, lead=False):
     should meet a bet, not the apparatus for finding one."""
     because = ""
     if with_reasoning and bet["reasoning"].strip():
-        opening, rest = (bet["reasoning"].strip(), "") if lead else shorten(bet["reasoning"])
-        if rest:
-            # A disclosure, not a script: the rest of the reasoning is on
-            # the page already, folded away until it is asked for.
-            because = (
-                '<details class="because">'
-                '<summary>%s<span class="cut">&hellip;</span>'
-                '<span class="fold open">see more</span>'
-                '<span class="fold shut">see less</span></summary>'
-                "<p>%s</p></details>" % (e(opening), e(rest))
-            )
-        else:
-            because = '<p class="because">%s</p>' % e(opening)
+        because = reasoning_block(bet, folded=not lead)
     return """<li class="entry%(lead)s">
   %(vote)s
   <div>
@@ -646,13 +643,13 @@ def bet_page(bet, user, csrf, note="", earlier=()):
       %(changed)s
       <dt>Entry number</dt><dd>%(id)d</dd>
     </dl>
+    %(share)s
     <div class="deeds no-print">
       %(votebtn)s
       %(revise)s
       <a class="button" href="/">Back to the ledger</a>
     </div>
   </div>
-  %(share)s
   %(earlier)s
   %(verdict)s
   %(resolve)s

@@ -261,28 +261,54 @@ class TestWhatAnEntryShows(NotebookTestCase):
         return visitor
 
     def test_a_long_reasoning_is_folded_but_all_of_it_is_there(self):
+        """Three lines is a measure of the page, not of the text, so the
+        cut is in the stylesheet and the whole reasoning is in the HTML.
+        What the ledger carries is the way to open it."""
         claim = "By 2034, a long piece of reasoning will be folded away in the ledger."
         ending = "and this is the last thing the reasoning says."
         reasoning = ("Something worth saying at length. " * 12) + ending
         visitor, where = self.a_long_bet(claim, reasoning)
 
         page = visitor.get("/").body
-        self.assertIn("<details class=\"because\">", page)
+        self.assertIn('<div class="because folded">', page)
         self.assertIn("see more", page)
-        self.assertIn(ending, page)          # folded, not cut off
-        self.assertNotIn(reasoning, page)    # and not shown in one piece
+        self.assertIn("see less", page)
+        self.assertIn(reasoning, page)       # all of it, clamped rather than cut
 
-        # The bet's own page keeps it whole, as it always did.
+        # The bet's own page keeps it whole and offers no fold at all.
         sheet = visitor.get(where).body
         self.assertIn(reasoning, sheet)
         self.assertNotIn("see more", sheet)
 
     def test_a_short_reasoning_wears_no_button(self):
+        """Under a length at which it could not run past three lines on
+        any screen, an entry is not given a control it does not need."""
         claim = "By 2034, a short piece of reasoning will be left exactly as it was written."
         reasoning = "Short enough to stand as it is."
         visitor, _ = self.a_long_bet(claim, reasoning)
         page = visitor.get("/").body
+        # Its own paragraph, with no fold wrapped round it. (Other entries
+        # on the page are long enough to carry one, so the page as a whole
+        # is no place to look.)
         self.assertIn('<p class="because">%s</p>' % reasoning, page)
+
+    def test_the_lead_entry_is_never_folded(self):
+        """The entry at the top of the plain ledger reads whole, however
+        long it runs - which is the point of setting it apart."""
+        sys.path.insert(0, ROOT)
+        import render
+        row = dict(
+            id=99, claim="By 2034, the top of the ledger will read whole.",
+            reasoning="Something worth saying at length. " * 12,
+            votes=1, voted=0, category="education", extra_subjects=None,
+            horizon=2034, status="open", created_at="2026-01-01T00:00:00+00:00",
+            anonymous=0, author_pseudo="someone", author_show_pseudo=1,
+        )
+        self.assertIn('<div class="because folded">', render.entry(row, None, "t"))
+        lead = render.entry(row, None, "t", lead=True)
+        self.assertNotIn("see more", lead)
+        self.assertIn("entry lead", lead)
+        self.assertIn(row["reasoning"].strip(), lead)
 
     def test_a_bet_page_offers_the_classic_places_to_pass_it_on(self):
         page = self.notebook.visitor().get("/bet/1").body
