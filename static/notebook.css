@@ -59,6 +59,18 @@ a:hover { color: var(--rubric); }
 }
 .masthead .rules { border-top: 3px double var(--ink); margin-top: 1rem; }
 
+/* Inside a record or a form, the name of the place is a running head:
+   the first thing on the paper and no longer the loudest thing on it, so
+   that what the page is actually about can be. */
+.masthead.running { padding-top: 1.5rem; }
+.masthead.running h1 { font-size: 1.35rem; letter-spacing: 0.1em; }
+.masthead.running .sub {
+  font-size: 0.82rem;
+  max-width: 26rem;
+  margin-top: 0.3rem;
+}
+.masthead.running .rules { border-top-width: 2px; margin-top: 0.7rem; }
+
 /* The letterhead - the name, the line under it, the doors - is not the
    page. Set quieter than what it sits over, so that the first thing in
    full ink is the thing the page is about: on a bet, the claim. */
@@ -736,6 +748,9 @@ footer.colophon {
 
   .masthead { padding-top: 1.7rem; }
   .masthead h1 { font-size: 1.45rem; letter-spacing: 0.07em; }
+  .masthead.running { padding-top: 1.2rem; }
+  .masthead.running h1 { font-size: 1.15rem; letter-spacing: 0.06em; }
+  .masthead.running .sub { font-size: 0.78rem; }
   .masthead .sub { font-size: 0.92rem; }
   nav.hall { gap: 0 0.9rem; font-size: 0.88rem; }
 

@@ -176,7 +176,7 @@ def hall(rooms, path):
 
 
 def layout(title, body, user=None, wide_footer=True, description="", path="",
-           own_title=False, card=DEFAULT_CARD, tagline=True):
+           own_title=False, card=DEFAULT_CARD, tagline=True, running=False):
     if user:
         # Four doors and not six. Your copies is a heading on the desk, and
         # signing out belongs beside the name it signs out of rather than
@@ -206,7 +206,7 @@ def layout(title, body, user=None, wide_footer=True, description="", path="",
 </head>
 <body>
 <div class="sheet">
-  <header class="masthead">
+  <header class="masthead%(running)s">
     <h1><a href="/">The Future with AI</a></h1>
     %(tagline)s
     <div class="rules"></div>
@@ -232,6 +232,10 @@ def layout(title, body, user=None, wide_footer=True, description="", path="",
         # read further, not above the thing they came to read.
         "tagline": '<p class="sub">%s</p>' % TAGLINE if tagline else "",
         "here": ' class="here"' if path == "/" else "",
+        # Inside a record or a form, the name of the place is a running
+        # head: still there, still the first thing on the paper, no longer
+        # the loudest thing on it.
+        "running": " running" if running else "",
         "room": room,
         "who": who,
         "body": body,
@@ -574,7 +578,7 @@ def revise_page(bet, user, csrf, values=None, error=""):
         "max": year + 75,
         "horizon": e(values.get("horizon", bet["horizon"])),
     }
-    return layout("Change a bet", body, user)
+    return layout("Change a bet", body, user, running=True)
 
 
 def words_of(text):
@@ -775,6 +779,7 @@ def bet_page(bet, user, csrf, note="", earlier=()):
         path="/bet/%d" % bet["id"],
         own_title=True,
         card=card_for(bet),
+        running=True,
     )
 
 
@@ -875,7 +880,7 @@ def propose_page(user, csrf, values=None, error="", first_time=False):
         "horizon": horizon_field(values, fresh),
         "anon": " checked" if values.get("anonymous") else "",
     }
-    return layout("Propose a bet", body, user)
+    return layout("Propose a bet", body, user, running=True)
 
 
 def sign_off_page(csrf, values, resolved, error=""):
@@ -941,7 +946,7 @@ def sign_off_page(csrf, values, resolved, error=""):
         "because": ('<div class="because">%s</div>' % e(values["reasoning"].strip())
                     if values.get("reasoning", "").strip() else ""),
     }
-    return layout("One last thing", body)
+    return layout("One last thing", body, running=True)
 
 
 def enter_page(csrf, error="", sent_to="", link="", keeping=False):
@@ -963,7 +968,7 @@ def enter_page(csrf, error="", sent_to="", link="", keeping=False):
   %s
   %s
 </div>""" % (e(sent_to), held, shortcut)
-        return layout("Key sent", body)
+        return layout("Key sent", body, running=True)
 
     note = '<div class="notice">%s</div>' % e(error) if error else ""
     body = """%s
@@ -976,7 +981,7 @@ def enter_page(csrf, error="", sent_to="", link="", keeping=False):
     <input type="email" name="email" required placeholder="you@example.org"></label>
   <div class="deeds"><button type="submit">Post me a key</button></div>
 </form>""" % (note, csrf_field(csrf))
-    return layout("Sign in", body)
+    return layout("Sign in", body, running=True)
 
 
 def desk_page(user, csrf, mine, backed, note="", error=""):
@@ -1058,7 +1063,7 @@ def desk_page(user, csrf, mine, backed, note="", error=""):
         "nback": len(backed),
         "backed": brief(backed, "You have not marked anything interesting yet."),
     }
-    return layout("Your desk", body, user)
+    return layout("Your desk", body, user, running=True)
 
 
 def keep_page(user, csrf, counts, bets, hands, query="", note="", error="", flagged=()):
@@ -1223,7 +1228,7 @@ def keep_page(user, csrf, counts, bets, hands, query="", note="", error="", flag
         "entries": entries and "".join(entries) or '<p class="hint">Nothing to show.</p>',
         "rows": "".join(rows),
     }
-    return layout("Keeping the ledger", body, user)
+    return layout("Keeping the ledger", body, user, running=True)
 
 
 def burn_page(user, csrf, bet):
@@ -1258,7 +1263,7 @@ def burn_page(user, csrf, bet):
                    if bet["reasoning"].strip() else "",
         "csrf": csrf_field(csrf),
     }
-    return layout("Burn an entry", body, user)
+    return layout("Burn an entry", body, user, running=True)
 
 
 def just_written(bet, user):
@@ -1514,4 +1519,4 @@ def message_page(title, text, user=None, link="/"):
         e(text),
         e(link),
     )
-    return layout(title, body, user)
+    return layout(title, body, user, running=True)
