@@ -586,7 +586,9 @@ table.hands .n { text-align: right; width: 5rem; }
 
 /* --- single bet -------------------------------------------------------- */
 
-.bet-sheet .claim { font-size: 1.5rem; line-height: 1.35; margin: 1.4rem 0 0.5rem; }
+/* The claim is why the page exists, and on a page with no tagline over
+   it there is room to say so. */
+.bet-sheet .claim { font-size: 1.75rem; line-height: 1.28; margin: 1.2rem 0 0.6rem; }
 .bet-sheet .colophon {
   font-style: italic;
   color: var(--ink-faded);
@@ -737,7 +739,7 @@ footer.colophon {
   .entry .tally .count { font-size: 1.2rem; }
   .entry .claim { font-size: 1.05rem; }
 
-  .bet-sheet .claim { font-size: 1.25rem; }
+  .bet-sheet .claim { font-size: 1.42rem; }
   .bet-sheet .because { font-size: 1rem; padding-left: 0.8rem; }
   .bet-sheet.quoted { padding-left: 0.8rem; }
   dl.record { gap: 0.3rem 0.9rem; }

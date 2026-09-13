@@ -168,7 +168,7 @@ def social_head(title, description, path="", own_title=False, card=DEFAULT_CARD)
 
 
 def layout(title, body, user=None, wide_footer=True, description="", path="",
-           own_title=False, card=DEFAULT_CARD):
+           own_title=False, card=DEFAULT_CARD, tagline=True):
     if user:
         # Four doors and not six. Your copies is a heading on the desk, and
         # signing out belongs beside the name it signs out of rather than
@@ -205,7 +205,7 @@ def layout(title, body, user=None, wide_footer=True, description="", path="",
 <div class="sheet">
   <header class="masthead">
     <h1><a href="/">The Future with AI</a></h1>
-    <p class="sub">%(tagline)s</p>
+    %(tagline)s
     <div class="rules"></div>
   </header>
   <nav class="hall">
@@ -224,7 +224,10 @@ def layout(title, body, user=None, wide_footer=True, description="", path="",
 """ % {
         "title": e(title),
         "social": social_head(title, description or DESCRIPTION, path, own_title, card),
-        "tagline": TAGLINE,
+        # A page about one bet says what the place is by being it. The
+        # notebook's pitch belongs where somebody is deciding whether to
+        # read further, not above the thing they came to read.
+        "tagline": '<p class="sub">%s</p>' % TAGLINE if tagline else "",
         "room": room,
         "who": who,
         "body": body,
@@ -765,6 +768,7 @@ def bet_page(bet, user, csrf, note="", earlier=()):
         path="/bet/%d" % bet["id"],
         own_title=True,
         card=card_for(bet),
+        tagline=False,
     )
 
 
