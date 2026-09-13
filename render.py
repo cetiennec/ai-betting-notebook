@@ -11,6 +11,7 @@ import db
 # Where the notebook answers from, for the links a link preview reads.
 # The same variable app.py takes its BASE_URL from; read here rather than
 # imported, since app imports render and not the other way about.
+ROOT = os.path.dirname(os.path.abspath(__file__))
 SITE_URL = os.environ.get("NOTEBOOK_URL", "http://localhost:8420").rstrip("/")
 SITE_NAME = "The Future with AI Betting Notebook"
 # What somebody sees when the address is pasted into a chat, above any
@@ -25,6 +26,37 @@ TAGLINE = (
     "Take your bet on what you think the future with AI will look like,\n"
     "    get reminded in a few years to observe what happened"
 )
+
+
+# The year cards that have actually been drawn - see make_cards.py. Read
+# once at startup: a directory listing per request is a silly price for a
+# set of files that only changes when somebody runs a script. A year with
+# no card of its own falls back to the notebook's own picture, so a bet
+# written for 2103 still looks like something when it is pasted.
+def _drawn_cards():
+    folder = os.path.join(ROOT, "static", "cards")
+    try:
+        return frozenset(
+            int(name[:-4]) for name in os.listdir(folder) if name.endswith(".png")
+            and name[:-4].isdigit()
+        )
+    except OSError:
+        return frozenset()
+
+
+CARD_YEARS = _drawn_cards()
+DEFAULT_CARD = "/static/card.png"
+
+
+def card_for(bet=None):
+    """The picture a pasted link shows.
+
+    A bet shows the year it will be judged by, which is the thing that
+    differs between one entry and the next and the thing that makes the
+    place what it is. Everything else shows the notebook."""
+    if bet is not None and bet["horizon"] in CARD_YEARS:
+        return "/static/cards/%d.png" % bet["horizon"]
+    return DEFAULT_CARD
 
 
 def e(value):
@@ -93,7 +125,7 @@ def date_of(value):
     return stamp.strftime("%d %B %Y") if stamp else ""
 
 
-def social_head(title, description, path=""):
+def social_head(title, description, path="", own_title=False, card=DEFAULT_CARD):
     """The handful of tags that decide what a pasted link looks like.
 
     `path` is the page's own address, and only a page worth arriving at
@@ -101,8 +133,11 @@ def social_head(title, description, path=""):
     than claiming to be the front door."""
     url = SITE_URL + (path or "/")
     # A preview shows the title alone, with no masthead under it, so the
-    # name of the place has to travel with the name of the page.
-    shown = "%s \u00b7 %s" % (title, SITE_NAME)
+    # name of the place has to travel with the name of the page - except
+    # where the title is the thing itself. A claim is what somebody is
+    # passing on, and a preview has room for a claim or for a claim and a
+    # signboard; the signboard is already on the line below as og:site_name.
+    shown = title if own_title else "%s \u00b7 %s" % (title, SITE_NAME)
     where = ('<link rel="canonical" href="%s">\n<meta property="og:url" content="%s">\n'
              % (e(url), e(url))) if path else ""
     return """<meta name="description" content="%(desc)s">
@@ -113,7 +148,7 @@ def social_head(title, description, path=""):
 <meta property="og:image" content="%(card)s">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
-<meta property="og:image:alt" content="A ruled cream page: The Future with AI, a betting notebook">
+<meta property="og:image:alt" content="%(alt)s">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:image" content="%(card)s">
 <meta name="twitter:title" content="%(title)s">
@@ -122,11 +157,18 @@ def social_head(title, description, path=""):
         "desc": e(description),
         "where": where,
         "site": e(SITE_NAME),
-        "card": e(SITE_URL + "/static/card.png"),
+        "card": e(SITE_URL + card),
+        "alt": e(
+            "A ruled cream page: The Future with AI, a bet to be judged by %s"
+            % card.rsplit("/", 1)[-1][:-4]
+            if card != DEFAULT_CARD
+            else "A ruled cream page: The Future with AI, a betting notebook"
+        ),
     }
 
 
-def layout(title, body, user=None, wide_footer=True, description="", path=""):
+def layout(title, body, user=None, wide_footer=True, description="", path="",
+           own_title=False, card=DEFAULT_CARD):
     if user:
         # Four doors and not six. Your copies is a heading on the desk, and
         # signing out belongs beside the name it signs out of rather than
@@ -181,7 +223,7 @@ def layout(title, body, user=None, wide_footer=True, description="", path=""):
 </html>
 """ % {
         "title": e(title),
-        "social": social_head(title, description or DESCRIPTION, path),
+        "social": social_head(title, description or DESCRIPTION, path, own_title, card),
         "tagline": TAGLINE,
         "room": room,
         "who": who,
@@ -406,7 +448,27 @@ def sift_block(query, counts, category, status, sort):
     }
 
 
-def index(bets, counts, user, query, category, status, sort, csrf, note=""):
+def state_line(tally, due):
+    """What the notebook amounts to, in one line: how much is written
+    down, by how many hands, and how much of it is waiting to be called.
+
+    The last of those is the whole point of the place, and it was the one
+    thing no page said out loud."""
+    bits = [
+        "<b>%d</b> %s" % (tally["bets"], "bet" if tally["bets"] == 1 else "bets"),
+        "by <b>%d</b> %s" % (tally["people"], "hand" if tally["people"] == 1 else "hands"),
+        "<b>%d</b> %s" % (tally["votes"], "mark" if tally["votes"] == 1 else "marks"),
+    ]
+    if due:
+        bits.append(
+            '<a href="/due"><b>%d</b> waiting to be called</a>'
+            % due
+        )
+    return '<p class="state">%s</p>' % " &middot; ".join(bits)
+
+
+def index(bets, counts, user, query, category, status, sort, csrf, note="",
+          tally=None, due=0):
     # The plain ledger - nothing searched, nothing narrowed, sorted the way
     # it sorts by itself - is the only state in which the entry at the top
     # is really the one most people are watching. Anywhere else it is just
@@ -428,6 +490,7 @@ def index(bets, counts, user, query, category, status, sort, csrf, note=""):
         head += " &mdash; searching &ldquo;%s&rdquo;" % e(query)
 
     body = """%(note)s
+%(state)s
 %(sift)s
 <h2>%(head)s <span class="hint">(%(n)d %(word)s)</span></h2>
 %(ledger)s
@@ -437,6 +500,7 @@ def index(bets, counts, user, query, category, status, sort, csrf, note=""):
   %(take)s
 </div>""" % {
         "note": note,
+        "state": state_line(tally, due) if tally else "",
         "sift": sift_block(query, counts, category, status, sort),
         "head": head,
         "n": len(bets),
@@ -689,9 +753,11 @@ def bet_page(bet, user, csrf, note="", earlier=()):
     # the claim is the title, the reasoning behind it the description.
     because = " ".join(bet["reasoning"].split())
     return layout(
-        bet["claim"][:60], body, user,
+        bet["claim"], body, user,
         description=(because[:280] or DESCRIPTION),
         path="/bet/%d" % bet["id"],
+        own_title=True,
+        card=card_for(bet),
     )
 
 
@@ -1176,6 +1242,69 @@ def burn_page(user, csrf, bet):
         "csrf": csrf_field(csrf),
     }
     return layout("Burn an entry", body, user)
+
+
+def just_written(bet, user):
+    """The notice on a bet somebody has this moment written.
+
+    With the ways of passing it on in it: nobody is ever keener about a
+    bet than in the half-minute after writing it, and by the time they
+    have scrolled to the foot of the page they are a reader again."""
+    return """<div class="notice plain welcome">
+  <p>Your bet is in the ledger, and the notebook is open to you. You are writing
+     as <b>%(who)s</b> &mdash; change the name, or hide it, at
+     <a href="/desk">your desk</a>.</p>
+  %(share)s
+</div>""" % {"who": e(user["pseudo"]), "share": share_row(bet)}
+
+
+def due_page(bets, user, csrf, year):
+    """Entries whose year has come. The notebook's own reckoning day, and
+    the only page here that is really about the passage of time."""
+    late = [b for b in bets if b["horizon"] < year]
+    now_due = [b for b in bets if b["horizon"] == year]
+    soon = [b for b in bets if b["horizon"] > year]
+
+    def run(rows, heading, hint):
+        if not rows:
+            return ""
+        return "<h2>%s <span class=\"hint\">(%d)</span></h2>\n<p class=\"hint\">%s</p>\n%s" % (
+            e(heading), len(rows), hint,
+            '<ol class="ledger">%s</ol>' % "".join(entry(b, user, csrf) for b in rows),
+        )
+
+    body = """<h2>Coming due</h2>
+<p class="lede">A bet is only worth writing down because a year arrives when
+   somebody has to say whether it happened. These are the entries whose year
+   has come, or is about to. The hand that wrote each one is the hand that
+   settles it &mdash; including when it turns out wrong, which is most of the
+   time and is the point.</p>
+%(late)s
+%(due)s
+%(soon)s
+%(none)s
+<div class="deeds">
+  <a class="button" href="/">The whole ledger</a>
+  <a class="button" href="/propose">Propose a bet</a>
+</div>""" % {
+        "late": run(
+            late, "Past their year",
+            "Written for a year that has been and gone, and still open. "
+            "Nothing is settled here by the notebook: only by whoever wrote it.",
+        ),
+        "due": run(
+            now_due, "Due this year",
+            "%d is the year these were written for." % year,
+        ),
+        "soon": run(soon, "Due next year", "Their year is the next one."),
+        "none": ('<p class="lede">Nothing is waiting. Every bet whose year has come '
+                 'has been called.</p>' if not bets else ""),
+    }
+    return layout(
+        "Coming due", body, user, path="/due",
+        description="Bets written for a year that has now arrived, waiting for the "
+                    "hand that wrote them to say whether they came true.",
+    )
 
 
 def subjects_page(user, counts):

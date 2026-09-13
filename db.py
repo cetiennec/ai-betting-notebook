@@ -736,6 +736,29 @@ def adopt_anon_votes(conn, user_id, anon_id):
     return cur.rowcount
 
 
+def due_bets(conn, viewer_id=0, viewer_anon="", by_year=None, limit=0):
+    """Open bets whose year has come, or is about to - soonest first.
+
+    The whole point of the notebook is on this list: an entry written
+    years ago whose moment has arrived and which somebody now has to
+    call."""
+    by_year = by_year or (now().year + 1)
+    sql = (BET_SELECT + " WHERE b.removed_at IS NULL AND b.status = 'open'"
+           "   AND b.horizon <= ? ORDER BY b.horizon ASC, votes DESC")
+    if limit:
+        sql += " LIMIT %d" % int(limit)
+    return conn.execute(sql, (viewer_id or 0, viewer_anon or "", by_year)).fetchall()
+
+
+def how_many_due(conn, by_year=None):
+    """How many entries are waiting to be called."""
+    return conn.execute(
+        """SELECT COUNT(*) FROM bets
+            WHERE removed_at IS NULL AND status = 'open' AND horizon <= ?""",
+        (by_year or now().year,),
+    ).fetchone()[0]
+
+
 def category_counts(conn):
     """How many bets sit under each subject, counting a bet once for each
     subject it carries."""

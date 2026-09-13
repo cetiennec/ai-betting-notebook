@@ -44,6 +44,7 @@ python3 test_notebook.py                     # the tests; -v to name each one
 | **Change** | the hand that wrote a bet can correct it while it is open. The ledger keeps every earlier wording in full; the page shows only what moved, struck for what went and underlined for what came. A hand may correct itself, but not quietly |
 | **Settle** | the author records how it turned out, with a line on why. A settled bet is left as it was written |
 | **Subjects** | thirteen of them, from education and work & economy to energy & infrastructure and love & friendship. A bet may carry up to three: some genuinely sit at a crossroads, and filing a malpractice claim under *health & medicine* alone loses whoever went looking under *law & rights* |
+| **Coming due** | `/due` — the entries whose year has arrived and which nobody has called yet, past their year first. The front page says how many are waiting. It is the only page here that is really about the passage of time, which is the whole reason for writing a bet down |
 | **Search** | one box for words, a box beside it for the subject; both combine with standing and order. On a phone the whole apparatus folds behind one line, so a reader meets a bet rather than the means of finding one; it opens itself again for anyone who has already searched or narrowed. Every subject is also a page of its own at `/subject/<name>`, listed at `/subjects` |
 | **Sign in** | email only. A one-shot key, valid an hour, and a session that lasts ninety days |
 | **Pen name** | shown or hidden, as a standing preference at your desk or per bet. Nothing checks it: pick a stupid one if you would rather be nobody. Your address is never shown either way |
@@ -61,6 +62,7 @@ app.py                 the server, the routes, the CLI, the example ledger
 db.py                  schema and every query
 render.py              every page, as plain HTML strings
 watch.py               the watched words, and the two ways of matching them
+make_cards.py          a build step: the link-preview card for each year
 mail.py                letters: the login key and the once-a-year letter
 test_notebook.py       the tests
 static/notebook.css    the whole look — paper, ink, and the print rules
@@ -130,8 +132,21 @@ crawlers to the public hall and keeps them out of the desk, the sign-in form
 and the printing room; `/sitemap.xml` lists the ledger, the house rules and
 every entry that has not been struck.
 
-The card a link shows is `static/card.png`, drawn from `static/card.svg`; if
-you change the wording, redraw it with any SVG renderer:
+A pasted **bet** shows the claim as its title, whole, and a card carrying the
+year it will be judged by — the thing that differs between one entry and the
+next. Those cards are drawn once, one per year, and served as ordinary static
+files: no image library at runtime and nothing to render on the fly. A year
+nobody has drawn falls back to the notebook's own card.
+
+```sh
+python3 make_cards.py              # the years a bet can carry from today
+python3 make_cards.py 2026 2065    # or a range of your own
+```
+
+That is a build step, like the notebook's own card — it wants `rsvg-convert`
+or Chrome, whichever is on the machine, and the notebook never runs it. The
+card a link shows for everything else is `static/card.png`, drawn from
+`static/card.svg`:
 
 ```sh
 rsvg-convert -w 1200 -h 630 -o static/card.png static/card.svg
@@ -181,6 +196,7 @@ which of its guarantees are real:
 
 What it does carry: CSRF tokens on every form (a double-submit cookie), rate
 limiting on the sign-in form (five keys per address, twenty per visitor, each
-per fifteen minutes — see `db.rate_limited`), length caps on everything written
+per fifteen minutes — see `db.rate_limited`) and on writing (a dozen bets an
+hour per hand, `app.BETS_PER_HAND`), length caps on everything written
 down, `Secure` cookies and a content security policy over https, and a request
 body it refuses to read past 64KB.

@@ -107,6 +107,18 @@ p.lede { font-style: italic; color: var(--ink-faded); }
   background: #fdf4ec;
 }
 .notice.plain { border-color: var(--rule); background: #f6f2e7; }
+.notice.welcome p { margin-top: 0; }
+.notice.welcome .share-row { border-top-color: var(--rule); margin-bottom: 0; }
+
+/* What the notebook amounts to, in one line, above the ledger. */
+.state {
+  margin: 1rem 0 0;
+  font-size: 0.9rem;
+  color: var(--ink-faded);
+  font-style: italic;
+}
+.state b { font-style: normal; font-family: var(--mono); font-size: 0.95em; }
+.state a { color: var(--rubric); }
 
 /* --- search & filters -------------------------------------------------- */
 

@@ -5,5 +5,6 @@ __pycache__/
 .git/
 .github/
 test_notebook.py
+make_cards.py
 fly.toml
 README.md

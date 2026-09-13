@@ -443,6 +443,29 @@ class TestAnonymousVoting(NotebookTestCase):
         return self.sign_in(self.notebook.visitor(address), email)
 
 
+class TestHowFastAHandMayWrite(FreshNotebookTestCase):
+    def test_a_dozen_bets_an_hour_and_then_a_pause(self):
+        visitor = self.notebook.visitor()
+        reply = visitor.post("/enter", {"email": "prolific@example.org"})
+        link = re.search(r"%s(/enter/[A-Za-z0-9_-]+)" % re.escape(self.notebook.base), reply.body)
+        visitor.get(link.group(1))
+
+        for i in range(12):   # app.BETS_PER_HAND
+            written = visitor.post("/propose", {
+                "claim": "By 2035, bet number %d of a great many will be written." % i,
+                "reasoning": "", "subject": "everyday life", "horizon": "2035",
+            })
+            self.assertEqual(written.status, 303, "stopped early at %d" % i)
+
+        one_more = visitor.post("/propose", {
+            "claim": "By 2035, the thirteenth will have been turned away.",
+            "reasoning": "", "subject": "everyday life", "horizon": "2035",
+        })
+        self.assertEqual(one_more.status, 429)
+        self.assertIn("great many bets", one_more.body)
+        self.assertNotIn("thirteenth", self.notebook.visitor().get("/").body)
+
+
 class TestTheBroom(FreshNotebookTestCase):
     """Sweeping the cookies and marking again. Each of these exhausts the
     day's new hands for 127.0.0.1, so they want a notebook nobody else is
@@ -489,6 +512,69 @@ class TestTheBroom(FreshNotebookTestCase):
         self.assertEqual(votes_on(visitor.get("/bet/2").body), before)  # an even number of minds
         self.assertEqual(visitor.post("/bet/2/vote", {}, csrf_from="/bet/2").status, 303)
         self.assertEqual(votes_on(visitor.get("/bet/2").body), before + 1)
+
+
+# --- the reckoning --------------------------------------------------------
+
+class TestComingDue(FreshNotebookTestCase):
+    """The page the whole notebook is pointed at: entries whose year has
+    arrived and which somebody now has to call."""
+
+    def setUp(self):
+        super().setUp()
+        self.year = db_year()
+
+    def signed_in_as(self, email):
+        visitor = self.notebook.visitor()
+        reply = visitor.post("/enter", {"email": email})
+        link = re.search(r"%s(/enter/[A-Za-z0-9_-]+)" % re.escape(self.notebook.base), reply.body)
+        self.assertIsNotNone(link, "no key was offered: %s" % reply.status)
+        visitor.get(link.group(1))
+        return visitor
+
+    def a_bet(self, visitor, claim, horizon):
+        reply = visitor.post("/propose", {
+            "claim": claim, "reasoning": "", "subject": "everyday life",
+            "horizon": str(horizon),
+        })
+        self.assertEqual(reply.status, 303, reply.body[:400])
+        return reply.headers["Location"]
+
+    def test_a_bet_whose_year_has_come_is_waiting_to_be_called(self):
+        writer = self.signed_in_as("waiting@example.org")
+        self.a_bet(writer, "By now, somebody will have had to call this one.", self.year)
+        page = self.notebook.visitor().get("/due")
+        self.assertEqual(page.status, 200)
+        self.assertIn("Due this year", page.body)
+        self.assertIn("somebody will have had to call this one", page.body)
+
+    def test_a_bet_with_years_to_run_is_not_on_the_list(self):
+        writer = self.signed_in_as("patient@example.org")
+        self.a_bet(writer, "By 2040, this one will still have years to run.", 2040)
+        self.assertNotIn("still have years to run", self.notebook.visitor().get("/due").body)
+
+    def test_settling_one_takes_it_off_the_list(self):
+        writer = self.signed_in_as("caller@example.org")
+        where = self.a_bet(writer, "By now, this one will have been settled.", self.year)
+        self.assertIn("will have been settled", self.notebook.visitor().get("/due").body)
+
+        writer.post(where + "/resolve", {"status": "came_true", "verdict": "It did."},
+                    csrf_from=where)
+        self.assertNotIn("will have been settled", self.notebook.visitor().get("/due").body)
+
+    def test_the_front_page_says_how_much_is_waiting(self):
+        writer = self.signed_in_as("teller@example.org")
+        self.a_bet(writer, "By now, the front page will have said so.", self.year)
+        front = self.notebook.visitor().get("/").body
+        self.assertIn("waiting to be called", front)
+        self.assertIn('href="/due"', front)
+
+    def test_the_front_page_says_what_the_notebook_amounts_to(self):
+        front = self.notebook.visitor().get("/").body
+        state = re.search(r'<p class="state">(.*?)</p>', front, re.S).group(1)
+        self.assertIn("bets", state)
+        self.assertIn("hands", state)
+        self.assertIn("marks", state)
 
 
 # --- how long a bet has ---------------------------------------------------
@@ -1334,13 +1420,44 @@ class TestBroadcasting(NotebookTestCase):
         self.assertIn('/static/card.png', body)
 
     def test_a_pasted_bet_says_what_the_bet_is(self):
+        """The claim travels whole. A preview has room for a claim, or for
+        a claim with a signboard stapled to the end of it and the last
+        words cut off - and the signboard is on the next line anyway."""
         page = self.notebook.visitor().get("/bet/1")
         og = re.search(r'<meta property="og:title" content="([^"]+)"', page.body).group(1)
-        title = re.search(r"<title>(.*?) &middot;", page.body, re.S).group(1)
-        self.assertIn(title[:40], og)  # the bet travels, not the notebook's name alone
-        self.assertIn("The Future with AI", og)
+        claim = re.search(r'<p class="claim">([^<]+)', page.body).group(1)
+        self.assertEqual(og, claim.strip())
+        self.assertNotIn("The Future with AI", og)
+        site = re.search(r'<meta property="og:site_name" content="([^"]+)"', page.body)
+        self.assertIn("Future with AI", site.group(1))
         canonical = re.search(r'<link rel="canonical" href="([^"]+)"', page.body).group(1)
         self.assertEqual(canonical, "%s/bet/1" % self.notebook.base)
+
+    def test_a_pasted_bet_shows_the_year_it_will_be_judged_by(self):
+        """One picture under every bet makes every bet look like the same
+        bet. The year is what differs, and there are few enough of them to
+        draw once - see make_cards.py."""
+        page = self.notebook.visitor().get("/bet/1")
+        horizon = int(re.search(r"to be judged by (\d{4})", page.body).group(1))
+        card = re.search(r'<meta property="og:image" content="([^"]+)"', page.body).group(1)
+        self.assertEqual(card, "%s/static/cards/%d.png" % (self.notebook.base, horizon))
+        self.assertIn(str(horizon), re.search(
+            r'<meta property="og:image:alt" content="([^"]+)"', page.body).group(1))
+
+        drawn = self.notebook.visitor().get("/static/cards/%d.png" % horizon)
+        self.assertEqual(drawn.status, 200)
+        self.assertEqual(drawn.headers["Content-Type"], "image/png")
+
+    def test_a_year_nobody_has_drawn_falls_back_to_the_notebook(self):
+        sys.path.insert(0, ROOT)
+        import render
+        self.assertEqual(render.card_for({"horizon": 9999}), "/static/card.png")
+        self.assertEqual(render.card_for(), "/static/card.png")
+
+    def test_an_ordinary_page_still_carries_the_name_of_the_place(self):
+        page = self.notebook.visitor().get("/").body
+        og = re.search(r'<meta property="og:title" content="([^"]+)"', page).group(1)
+        self.assertIn("The Future with AI", og)
 
     def test_a_page_nobody_should_arrive_at_claims_no_address(self):
         # A canonical link on the sign-in form would tell a crawler the

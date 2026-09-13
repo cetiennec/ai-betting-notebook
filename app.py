@@ -119,6 +119,11 @@ def bet_trouble(claim, subjects, horizon, keeping=None):
     return None
 # Nobody needs to post more than a long bet; refuse the rest unread.
 MAX_BODY_BYTES = 64 * 1024
+# How many bets one hand may write in an hour. Well past anybody thinking
+# about what they write and nowhere near a flood - and the only thing
+# standing between a keeper and an afternoon of scrolling.
+BETS_PER_HAND = 12
+BETS_WINDOW_MINUTES = 60
 MAX_CLAIM = 240
 MAX_REASONING = 4000
 MAX_VERDICT = 2000
@@ -389,6 +394,8 @@ class Notebook(BaseHTTPRequestHandler):
                 if not user:
                     return self.go("/enter")
                 return self.reply(self.desk(conn, user))
+            if path == "/due":
+                return self.page_due(conn, user)
             if path == "/subjects":
                 return self.reply(
                     render.subjects_page(user, db.category_counts(conn))
@@ -481,6 +488,19 @@ class Notebook(BaseHTTPRequestHandler):
             render.index(
                 bets, db.category_counts(conn), user, query, category, status, sort,
                 self.csrf_token(), note,
+                tally=db.tally(conn), due=db.how_many_due(conn),
+            )
+        )
+
+    def page_due(self, conn, user):
+        """The reckoning: what the ledger is waiting on."""
+        year = db.now().year
+        return self.reply(
+            render.due_page(
+                db.due_bets(
+                    conn, user["id"] if user else 0, self.anon_id(), by_year=year + 1
+                ),
+                user, self.csrf_token(), year,
             )
         )
 
@@ -522,13 +542,9 @@ class Notebook(BaseHTTPRequestHandler):
             )
         note = ""
         if (args or {}).get("welcome") and user:
-            # Arrived here straight from the key that wrote it.
-            note = (
-                '<div class="notice plain">Your bet is in the ledger, and the notebook '
-                "is open to you. You are writing as <b>%s</b> &mdash; change the name, or "
-                "hide it, at <a href='/desk'>your desk</a>.</div>"
-                % render.e(user["pseudo"])
-            )
+            # Arrived here straight from writing it, which is the moment
+            # somebody is likeliest to want to pass it on.
+            note = render.just_written(bet, user)
         return self.reply(
             render.bet_page(
                 bet, user, self.csrf_token(), note,
@@ -607,6 +623,7 @@ class Notebook(BaseHTTPRequestHandler):
         pages = [
             (BASE_URL + "/", "daily"),
             (BASE_URL + "/subjects", "weekly"),
+            (BASE_URL + "/due", "daily"),
             (BASE_URL + "/house", "monthly"),
         ]
         # A page per subject: one more way in for a reader, and one more
@@ -899,6 +916,17 @@ class Notebook(BaseHTTPRequestHandler):
         # Still their first: the rules stay up while they fix whatever
         # the notebook has just complained about.
         first = not db.has_written(conn, user["id"])
+
+        if db.rate_limited(conn, "write:%d" % user["id"], BETS_PER_HAND, BETS_WINDOW_MINUTES):
+            return self.reply(
+                render.message_page(
+                    "That is a great many bets",
+                    "A dozen in an hour is as fast as this notebook writes. Come back "
+                    "shortly - the ones you have written are safe where they are.",
+                    user, link="/desk",
+                ),
+                429,
+            )
 
         trouble = bet_trouble(claim, subjects, horizon)
         if trouble:
