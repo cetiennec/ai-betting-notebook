@@ -488,6 +488,7 @@ class Notebook(BaseHTTPRequestHandler):
             render.index(
                 bets, db.category_counts(conn), user, query, category, status, sort,
                 self.csrf_token(), note, due=db.how_many_due(conn),
+                tally=db.tally(conn),
             )
         )
 

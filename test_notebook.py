@@ -562,6 +562,20 @@ class TestComingDue(FreshNotebookTestCase):
                     csrf_from=where)
         self.assertNotIn("will have been settled", self.notebook.visitor().get("/due").body)
 
+    def test_the_book_is_totalled_at_the_foot_of_the_ledger(self):
+        front = self.notebook.visitor().get("/").body
+        standing = front.split('<div class="standing">', 1)[1].split("</div>\n<div", 1)[0]
+        for word in ("bets", "hands", "marks"):
+            self.assertIn('<span class="what">%s</span>' % word, standing)
+        # under the last line of the ledger, not over the first
+        self.assertLess(front.index("ol class=\"ledger\""), front.index('class="standing"'))
+
+    def test_a_search_is_not_totalled(self):
+        """A total under a handful of results is a total of something
+        nobody asked about."""
+        found = self.notebook.visitor().get("/?q=photograph").body
+        self.assertNotIn('class="standing"', found)
+
     def test_the_front_page_offers_the_way_in_and_says_how_many(self):
         front = self.notebook.visitor().get("/").body
         self.assertIn('<a class="button" href="/due">Coming due</a>', front)

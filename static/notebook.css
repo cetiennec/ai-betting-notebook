@@ -362,6 +362,29 @@ form.second-thoughts .deeds button:hover { background: var(--ink-faded); color: 
 }
 .stamp.quiet { border-color: var(--ink-faded); color: var(--ink-faded); }
 
+/* The total at the foot of the page, as an account book has one: the
+   figure over the word for it, which is how every number here is set. */
+.standing {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.2rem 2.6rem;
+  margin: 0;
+  padding: 1.1rem 0 0.2rem;
+}
+.standing .figure {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.standing .n { font-family: var(--mono); font-size: 1.35rem; line-height: 1.1; }
+.standing .what {
+  font-variant: small-caps;
+  letter-spacing: 0.08em;
+  font-size: 0.66rem;
+  color: var(--ink-faded);
+}
+
 /* --- forms & buttons --------------------------------------------------- */
 
 label.field { display: block; margin: 1.1rem 0 0; }

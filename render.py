@@ -451,7 +451,26 @@ def sift_block(query, counts, category, status, sort):
     }
 
 
-def index(bets, counts, user, query, category, status, sort, csrf, note="", due=0):
+def standing(tally):
+    """What the notebook amounts to, totalled at the foot of the ledger.
+
+    Where an account book puts a total: under the last line of the page,
+    not over the first. Set the way every other number here is set - the
+    figure over the word for it, as on each entry's tally."""
+    def figure(n, singular, plural):
+        return ('<div class="figure"><span class="n">%d</span>'
+                '<span class="what">%s</span></div>'
+                % (n, e(singular if n == 1 else plural)))
+
+    return '<div class="standing">%s</div>' % "".join((
+        figure(tally["bets"], "bet", "bets"),
+        figure(tally["people"], "hand", "hands"),
+        figure(tally["votes"], "mark", "marks"),
+    ))
+
+
+def index(bets, counts, user, query, category, status, sort, csrf, note="", due=0,
+          tally=None):
     # The plain ledger - nothing searched, nothing narrowed, sorted the way
     # it sorts by itself - is the only state in which the entry at the top
     # is really the one most people are watching. Anywhere else it is just
@@ -476,6 +495,7 @@ def index(bets, counts, user, query, category, status, sort, csrf, note="", due=
 %(sift)s
 <h2>%(head)s <span class="hint">(%(n)d %(word)s)</span></h2>
 %(ledger)s
+%(standing)s
 <div class="deeds">
   <a class="button" href="/propose">Propose a bet</a>
   <a class="button" href="/due">%(due)s</a>
@@ -489,6 +509,9 @@ def index(bets, counts, user, query, category, status, sort, csrf, note="", due=
         # not count itself out loud. It says how many are waiting when any
         # are, and stays where it is when none are.
         "due": "Coming due (%d)" % due if due else "Coming due",
+        # Only under the whole book. A total under a search result is a
+        # total of something nobody asked about.
+        "standing": standing(tally) if tally and not (query or category or status) else "",
         "n": len(bets),
         "word": "bet" if len(bets) == 1 else "bets",
         "ledger": ledger,
