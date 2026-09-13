@@ -110,37 +110,6 @@ p.lede { font-style: italic; color: var(--ink-faded); }
 .notice.welcome p { margin-top: 0; }
 .notice.welcome .share-row { border-top-color: var(--rule); margin-bottom: 0; }
 
-/* What the notebook amounts to, under the masthead: the standing of the
-   book, set the way an account book sets one - the figure over the word
-   for it, which is how every other number on these pages is set. */
-.state {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 0.2rem 2.6rem;
-  margin: 1.1rem 0 0.2rem;
-  padding: 0.7rem 0;
-  border-top: 1px solid var(--rule);
-  border-bottom: 1px solid var(--rule);
-}
-.state .figure {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-decoration: none;
-  color: var(--ink);
-}
-.state .n { font-family: var(--mono); font-size: 1.45rem; line-height: 1.1; }
-.state .what {
-  font-variant: small-caps;
-  letter-spacing: 0.08em;
-  font-size: 0.68rem;
-  color: var(--ink-faded);
-}
-/* The only one of them that is an invitation rather than a fact. */
-.state .due, .state .due .n { color: var(--rubric); }
-.state .due .what { color: var(--rubric); }
-.state .due:hover .what { text-decoration: underline; }
 
 /* --- search & filters -------------------------------------------------- */
 
@@ -771,9 +740,6 @@ footer.colophon {
   .sift-body { display: none; }
   .sift-toggle:checked ~ .sift-body { display: block; }
   form.search { margin-top: 0.8rem; }
-
-  .state { gap: 0.2rem 1.5rem; padding: 0.6rem 0; }
-  .state .n { font-size: 1.3rem; }
 
   /* The lead entry keeps its presence, a size down from the desktop one. */
   .entry.lead .claim { font-size: 1.22rem; }

@@ -451,34 +451,7 @@ def sift_block(query, counts, category, status, sort):
     }
 
 
-def state_line(tally, due):
-    """What the notebook amounts to: how much is written down, by how many
-    hands, how many marks, and how much of it is waiting to be called.
-
-    Set the way the ledger sets every other number - the figure over the
-    word for it, as on each entry's tally - because that is already what a
-    number looks like here, and a line of small italic type was not
-    something anybody was going to read."""
-    def figure(n, singular, plural, href=""):
-        shut, close = ("<a class=\"figure due\" href=\"%s\">" % href, "</a>") if href else (
-            '<div class="figure">', "</div>")
-        return '%s<span class="n">%d</span><span class="what">%s</span>%s' % (
-            shut, n, e(singular if n == 1 else plural), close
-        )
-
-    figures = [
-        figure(tally["bets"], "bet", "bets"),
-        figure(tally["people"], "hand", "hands"),
-        figure(tally["votes"], "mark", "marks"),
-    ]
-    if due:
-        # The one of these that is not a fact but an invitation.
-        figures.append(figure(due, "to be called", "to be called", href="/due"))
-    return '<div class="state">%s</div>' % "".join(figures)
-
-
-def index(bets, counts, user, query, category, status, sort, csrf, note="",
-          tally=None, due=0):
+def index(bets, counts, user, query, category, status, sort, csrf, note="", due=0):
     # The plain ledger - nothing searched, nothing narrowed, sorted the way
     # it sorts by itself - is the only state in which the entry at the top
     # is really the one most people are watching. Anywhere else it is just
@@ -500,19 +473,22 @@ def index(bets, counts, user, query, category, status, sort, csrf, note="",
         head += " &mdash; searching &ldquo;%s&rdquo;" % e(query)
 
     body = """%(note)s
-%(state)s
 %(sift)s
 <h2>%(head)s <span class="hint">(%(n)d %(word)s)</span></h2>
 %(ledger)s
 <div class="deeds">
   <a class="button" href="/propose">Propose a bet</a>
+  <a class="button" href="/due">%(due)s</a>
   <a class="button" href="/subjects">Browse by subject</a>
   %(take)s
 </div>""" % {
         "note": note,
-        "state": state_line(tally, due) if tally else "",
         "sift": sift_block(query, counts, category, status, sort),
         "head": head,
+        # The only way in to the reckoning, now that the front page does
+        # not count itself out loud. It says how many are waiting when any
+        # are, and stays where it is when none are.
+        "due": "Coming due (%d)" % due if due else "Coming due",
         "n": len(bets),
         "word": "bet" if len(bets) == 1 else "bets",
         "ledger": ledger,
@@ -768,7 +744,6 @@ def bet_page(bet, user, csrf, note="", earlier=()):
         path="/bet/%d" % bet["id"],
         own_title=True,
         card=card_for(bet),
-        tagline=False,
     )
 
 
