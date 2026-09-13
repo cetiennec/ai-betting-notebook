@@ -875,8 +875,10 @@ def desk_page(user, csrf, mine, backed, note="", error=""):
 %(backed)s
 
 <h2 id="copies">Your copies</h2>
-<p class="lede">Nothing here is kept for you anywhere but on paper and on your own
-   machine. Take what you want to keep.</p>
+<p class="lede">Want a record of your own, or a notebook you keep yourself?
+   Take one: your bets as a sheet to print, or as plain text to put wherever
+   you keep things. Nothing here is kept for you anywhere but on paper and on
+   your own machine.</p>
 <div class="filters">
   <div class="row"><span class="label">your own bets</span>
     <a href="/print?mine=1">print sheet</a><a href="/export.txt?mine=1">plain text</a></div>
