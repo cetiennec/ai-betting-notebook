@@ -763,8 +763,8 @@ class Notebook(BaseHTTPRequestHandler):
         token = db.new_login_token(conn, email)
         if draft:
             db.keep_draft(
-                conn, token, draft["claim"], draft["reasoning"], draft["subjects"],
-                int(draft["horizon"]), draft["anonymous"],
+                conn, token, email, draft["claim"], draft["reasoning"],
+                draft["subjects"], int(draft["horizon"]), draft["anonymous"],
             )
         url = "%s/enter/%s" % (BASE_URL, quote(token))
         sent = mail.send_login_link(email, url)
@@ -933,6 +933,13 @@ class Notebook(BaseHTTPRequestHandler):
             return self.reply(
                 render.propose_page(user, self.csrf_token(), values, trouble, first), 400
             )
+        # A pressed-twice button, or a form sent again from the back of
+        # the browser: the same hand saying exactly the same thing is the
+        # entry it already wrote, not a second one.
+        twin = db.standing_twin(conn, user["id"], claim)
+        if twin:
+            return self.go("/bet/%d" % twin)
+
         bet_id = db.create_bet(
             conn, user["id"], claim, reasoning[:MAX_REASONING], subjects, int(horizon), anonymous
         )

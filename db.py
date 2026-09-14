@@ -361,8 +361,14 @@ def spend_login_token(conn, token):
     return row["email"]
 
 
-def keep_draft(conn, token, claim, reasoning, subjects, horizon, anonymous):
-    """Hold a bet against the key that was just posted out."""
+def keep_draft(conn, token, email, claim, reasoning, subjects, horizon, anonymous):
+    """Hold a bet against the key that was just posted out.
+
+    A draft belongs to an address rather than to a key. Somebody who does
+    not see the first letter and asks for another gets another key, and
+    both of them open the notebook - so if each carried its own copy of
+    the bet, opening both would write it twice. Only the newest key holds
+    it; the older ones sign you in and write nothing."""
     with conn:
         # Keys go stale in an hour; the drafts behind unopened ones have
         # no reason to outlive them.
@@ -371,6 +377,11 @@ def keep_draft(conn, token, claim, reasoning, subjects, horizon, anonymous):
                  (SELECT token FROM login_tokens
                    WHERE used_at IS NOT NULL OR created_at < ?)""",
             (stamp(now() - timedelta(minutes=LOGIN_TOKEN_MINUTES)),),
+        )
+        conn.execute(
+            """DELETE FROM drafts WHERE token IN
+                 (SELECT token FROM login_tokens WHERE email = ? AND used_at IS NULL)""",
+            (email.lower().strip(),),
         )
         conn.execute(
             """INSERT OR REPLACE INTO drafts
@@ -395,6 +406,9 @@ def write_draft(conn, token, user_id):
     subjects = clean_subjects(row["subjects"].split("|"))
     if not subjects:
         return None
+    twin = standing_twin(conn, user_id, row["claim"])
+    if twin:
+        return twin   # already written, by another key or another press
     return create_bet(
         conn, user_id, row["claim"], row["reasoning"], subjects,
         row["horizon"], row["anonymous"],
@@ -506,6 +520,30 @@ def create_bet(conn, user_id, claim, reasoning, subjects, horizon, anonymous):
         )
     set_subjects(conn, cur.lastrowid, subjects)
     return cur.lastrowid
+
+
+def standing_twin(conn, user_id, claim):
+    """The entry this hand has already written saying exactly this, if
+    there is one.
+
+    A double-pressed button, a reloaded form, two keys asked for and both
+    opened: the ledger should hold the bet once. Compared on the wording
+    with the spacing and the capitals taken out of it, which is as far as
+    a machine should go - two entries that differ by a word are two bets,
+    and it is not this function's business to say otherwise."""
+    wanted = " ".join((claim or "").split()).casefold()
+    if not wanted:
+        return None
+    # A hand may write a dozen bets an hour; a few hundred is further back
+    # than any double-press, and the wording has to be compared out here
+    # because SQL cannot fold the spacing.
+    for row in conn.execute(
+        """SELECT id, claim FROM bets WHERE user_id = ? AND removed_at IS NULL
+            ORDER BY id DESC LIMIT 200""", (user_id,)
+    ):
+        if " ".join(row["claim"].split()).casefold() == wanted:
+            return row["id"]
+    return None
 
 
 def has_written(conn, user_id):

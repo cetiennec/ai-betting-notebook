@@ -773,6 +773,65 @@ class TestWritingBeforeSigningIn(FreshNotebookTestCase):
         self.assertIn('value="2032"', back.body)
         self.assertIn('value="everyday life" checked', back.body)
 
+    def test_asking_for_a_second_key_does_not_write_the_bet_twice(self):
+        """The bug this fixes: a key that does not arrive, a second one
+        asked for, and both of them opened. Each carried its own copy of
+        the draft, so the ledger got the bet twice."""
+        visitor = self.notebook.visitor()
+        visitor.post("/propose", self.A_BET)
+        first = visitor.post(
+            "/propose/sign", dict(self.A_BET, email="twokeys@example.org"),
+            csrf_from="/propose",
+        )
+        second = visitor.post(
+            "/propose/sign", dict(self.A_BET, email="twokeys@example.org"),
+            csrf_from="/propose",
+        )
+        one, two = self.key_from(first), self.key_from(second)
+        self.assertNotEqual(one, two)
+
+        # Both keys open the notebook - they were both asked for, and
+        # neither is a forgery - but only one of them is carrying a bet.
+        self.assertEqual(visitor.get(two).status, 303)
+        self.assertEqual(visitor.get(one).status, 303)
+        self.assertEqual(
+            self.notebook.visitor().get("/").body.count(self.A_BET["claim"]), 1
+        )
+
+    def test_the_older_key_still_lets_you_in_and_writes_nothing(self):
+        visitor = self.notebook.visitor()
+        visitor.post("/propose", self.A_BET)
+        first = visitor.post(
+            "/propose/sign", dict(self.A_BET, email="olderkey@example.org"),
+            csrf_from="/propose",
+        )
+        visitor.post(
+            "/propose/sign", dict(self.A_BET, email="olderkey@example.org"),
+            csrf_from="/propose",
+        )
+        opened = visitor.get(self.key_from(first))   # the one that arrived first
+        self.assertEqual(opened.status, 303)
+        self.assertEqual(opened.headers["Location"], "/?welcome=1")   # signed in, nothing written
+        self.assertNotIn(self.A_BET["claim"], self.notebook.visitor().get("/").body)
+
+    def test_the_same_hand_writing_the_same_words_twice_writes_once(self):
+        """A double-pressed button, or a form sent again from the back of
+        the browser."""
+        visitor = self.notebook.visitor()
+        visitor.post("/propose", self.A_BET)
+        sent = visitor.post(
+            "/propose/sign", dict(self.A_BET, email="twice.over@example.org"),
+            csrf_from="/propose",
+        )
+        where = visitor.get(self.key_from(sent)).headers["Location"]
+
+        again = visitor.post("/propose", self.A_BET)
+        self.assertEqual(again.status, 303)
+        self.assertEqual(again.headers["Location"], where.split("?")[0])
+        self.assertEqual(
+            self.notebook.visitor().get("/").body.count(self.A_BET["claim"]), 1
+        )
+
     def test_a_bet_that_will_not_do_is_refused_before_the_address_is_asked_for(self):
         reply = self.notebook.visitor().post("/propose", dict(self.A_BET, claim="too short"))
         self.assertEqual(reply.status, 400)
