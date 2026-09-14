@@ -515,6 +515,46 @@ class TestTheBroom(FreshNotebookTestCase):
         self.assertEqual(votes_on(visitor.get("/bet/2").body), before + 1)
 
 
+# --- the letters ----------------------------------------------------------
+
+class TestWhatALetterLooksLike(FreshNotebookTestCase):
+    """A key in a junk folder is somebody who asked to join and silently
+    could not. Most of what decides that is DNS; this is the part that is
+    not."""
+
+    def outbox(self):
+        box = os.path.join(self.notebook.dir, "outbox")
+        return "\n".join(
+            open(os.path.join(box, name)).read() for name in sorted(os.listdir(box))
+        )
+
+    def test_a_key_carries_the_headers_a_filter_looks_for(self):
+        visitor = self.notebook.visitor()
+        visitor.post("/enter", {"email": "reader@example.org"})
+        letter = self.outbox()
+        self.assertIn("Date: ", letter)
+        self.assertIn("Message-ID: <", letter)
+        self.assertIn("Auto-Submitted: auto-generated", letter)
+        # a name beside the address, not a bare machine
+        self.assertRegex(letter, r"From: [^<\n]+ <[^>]+@[^>]+>")
+        # and it says what it is where somebody will see it
+        self.assertIn("Subject: Your key to the Future with AI betting notebook", letter)
+
+    def test_every_letter_has_a_message_id_of_its_own(self):
+        visitor = self.notebook.visitor()
+        for address in ("one@example.org", "two@example.org"):
+            visitor.post("/enter", {"email": address})
+        ids = re.findall(r"Message-ID: (<[^>]+>)", self.outbox())
+        self.assertEqual(len(ids), 2)
+        self.assertEqual(len(set(ids)), 2)
+
+    def test_the_page_says_where_to_look_if_it_does_not_arrive(self):
+        visitor = self.notebook.visitor()
+        sent = visitor.post("/enter", {"email": "hopeful@example.org"})
+        self.assertRegex(sent.body, r"junk\s+folder")   # the markup wraps the phrase
+        self.assertIn("not junk", sent.body)
+
+
 # --- the reckoning --------------------------------------------------------
 
 class TestComingDue(FreshNotebookTestCase):

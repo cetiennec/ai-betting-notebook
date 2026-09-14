@@ -1164,7 +1164,7 @@ def serve(port):
 def main():
     parser = argparse.ArgumentParser(description="The Future with AI betting notebook")
     parser.add_argument("command", nargs="?", default="serve",
-                        choices=["serve", "seed", "send-letters", "backup"])
+                        choices=["serve", "seed", "send-letters", "backup", "mail-check"])
     parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", 8420)))
     parser.add_argument("--force", action="store_true",
                         help="seed even if the ledger is full; send letters even if not due")
@@ -1181,6 +1181,10 @@ def main():
         db.backup_to(where)
         print("%s (%d bytes)" % (where, os.path.getsize(where)))
         return None
+    if args.command == "mail-check":
+        if not args.email:
+            return print("Say where to: python3 app.py mail-check --email you@example.org")
+        return None if mail.check(args.email, BASE_URL) else sys.exit(1)
     if args.command == "send-letters":
         conn = db.init()
         n = mail.send_yearly(conn, BASE_URL, force=args.force, only_email=args.email)

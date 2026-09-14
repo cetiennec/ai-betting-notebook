@@ -152,6 +152,49 @@ card a link shows for everything else is `static/card.png`, drawn from
 rsvg-convert -w 1200 -h 630 -o static/card.png static/card.svg
 ```
 
+## The mail that has to arrive
+
+Sign-in here is a key posted to an address, which makes the mail load-bearing:
+a key in a junk folder is somebody who asked to join and silently could not,
+and nothing in the notebook can see that happen. Post yourself one and look:
+
+```sh
+python3 app.py mail-check --email you@example.org
+```
+
+It prints what the letters go out as, warns if the From address is at a
+different domain from the notebook itself (a key that arrives from somewhere
+other than the place it opens is the shape of a phishing letter, and is
+filtered like one), and posts a test letter.
+
+What the code already does: a `Date` and a `Message-ID` of its own, a name on
+the `From` line, `Auto-Submitted: auto-generated`, and plain text. What it
+cannot do is vouch for the domain — that is DNS, and it is most of the battle:
+
+- **Send from the notebook's own domain.** `SMTP_FROM=notebook@your-domain`,
+  matching where the notebook answers. `SMTP_FROM_NAME` sets the name beside it.
+- **SPF** — a TXT record on the domain naming whoever sends for you:
+  `v=spf1 include:<your provider> -all`
+- **DKIM** — the CNAME or TXT records your provider gives you. Gmail and Yahoo
+  filter unauthenticated mail from unknown domains as a matter of course.
+- **DMARC** — a TXT record at `_dmarc.your-domain`, starting gently:
+  `v=DMARC1; p=none; rua=mailto:you@your-domain`
+- **Use a transactional sender** (Postmark, Resend, SES, Mailgun) rather than a
+  personal mailbox's SMTP. An ordinary mailbox account posting automated keys
+  is the exact shape of a compromised account.
+- **Do not go from nothing to two hundred keys in an hour.** A domain that has
+  never sent mail, suddenly sending a burst on the day you post a link, is the
+  profile every filter is built to catch. Send yourself and a few colleagues
+  first, over a few days.
+
+Check the result in the inbox you are worried about: in Gmail, *show original*
+should say `SPF: PASS`, `DKIM: PASS`, `DMARC: PASS`. Anything else and the keys
+are being filtered, whatever the notebook thinks it sent.
+
+One thing left undone: the yearly letter has no `List-Unsubscribe` header. It
+is a recurring letter and it wants one before the first batch goes out, which
+means an unsubscribe address that works without signing in first.
+
 ## Where it still falls short
 
 It is built for one machine and a handful of people, and it is honest about

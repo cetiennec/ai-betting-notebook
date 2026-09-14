@@ -966,6 +966,9 @@ def enter_page(csrf, error="", sent_to="", link="", keeping=False):
         body = """<div class="notice plain">
   <p>A key has been posted to <b>%s</b>. It opens the notebook once, within the hour.</p>
   %s
+  <p class="hint">If it is not in your inbox in a minute or two, look in the junk
+     folder &mdash; a notebook nobody has heard of yet is exactly what a mail
+     filter is suspicious of. Marking it as not junk lets the next one through.</p>
   %s
 </div>""" % (e(sent_to), held, shortcut)
         return layout("Key sent", body, running=True)

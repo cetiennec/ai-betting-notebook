@@ -4,6 +4,13 @@ In the prototype nothing leaves the machine: every letter is dropped into
 data/outbox/ as a plain text file and echoed to the console. Set SMTP_HOST
 (and optionally SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM) to post them for
 real instead.
+
+A letter from here is somebody's way in - a key that lands in a junk
+folder is a person who asked to join and silently could not. Most of what
+decides that is DNS and not code (see the README), but the part that is
+code is here: a letter with a Date, a Message-ID of its own, a name on
+the From line and a word about what kind of letter it is. Mail without
+those reads as machinery, and filters treat it accordingly.
 """
 
 import os
@@ -11,12 +18,17 @@ import re
 import smtplib
 import sys
 from email.message import EmailMessage
+from email.utils import formataddr, formatdate, make_msgid
 from datetime import timedelta
 
 import db
 
 OUTBOX = os.path.join(db.DATA_DIR, "outbox")
 SENDER = os.environ.get("SMTP_FROM", "notebook@future-with-ai.local")
+# The name on the From line. A letter from a person-shaped sender is read
+# as a letter; one from a bare address is read as a machine.
+SENDER_NAME = os.environ.get("SMTP_FROM_NAME", "The Future with AI notebook")
+SENDER_DOMAIN = SENDER.rsplit("@", 1)[-1] if "@" in SENDER else "future-with-ai.local"
 
 
 def warn_the_keepers(bet_id, claim, words, where):
@@ -53,7 +65,28 @@ def using_real_smtp():
     return bool(os.environ.get("SMTP_HOST"))
 
 
-def send(to, subject, body):
+def letter(to, subject, body, headers=None):
+    """The letter itself, headers and all.
+
+    Date and Message-ID are not optional furniture: a message without
+    them is one a filter has every reason to distrust, and neither
+    smtplib nor the SMTP server is obliged to add them."""
+    msg = EmailMessage()
+    msg["To"] = to
+    msg["From"] = formataddr((SENDER_NAME, SENDER))
+    msg["Subject"] = subject
+    msg["Date"] = formatdate(localtime=True)
+    msg["Message-ID"] = make_msgid(domain=SENDER_DOMAIN)
+    # Says plainly that a machine wrote this because a person asked it to,
+    # which is what keeps it out of an auto-responder's way.
+    msg["Auto-Submitted"] = "auto-generated"
+    for name, value in (headers or {}).items():
+        msg[name] = value
+    msg.set_content(body)
+    return msg
+
+
+def send(to, subject, body, headers=None):
     """Write the letter to the outbox, then try to post it for real.
 
     Returns True if a real send succeeded (or none was configured - the
@@ -63,22 +96,19 @@ def send(to, subject, body):
     os.makedirs(OUTBOX, exist_ok=True)
     slug = re.sub(r"[^a-z0-9]+", "-", ("%s-%s" % (to, subject)).lower())[:60]
     path = os.path.join(OUTBOX, "%s-%s.txt" % (db.now().strftime("%Y%m%d-%H%M%S"), slug))
-    letter = "To: %s\nFrom: %s\nSubject: %s\n\n%s\n" % (to, SENDER, subject, body)
+    msg = letter(to, subject, body, headers)
     with open(path, "w") as fh:
-        fh.write(letter)
+        fh.write(str(msg))
 
     host = os.environ.get("SMTP_HOST")
     if not host:
         print("\n" + "-" * 68)
-        print(letter.rstrip())
+        print(str(msg).rstrip())
         print("-" * 68)
         print("[mail] written to %s\n" % path)
         return True
 
     try:
-        msg = EmailMessage()
-        msg["To"], msg["From"], msg["Subject"] = to, SENDER, subject
-        msg.set_content(body)
         with smtplib.SMTP(host, int(os.environ.get("SMTP_PORT", 587))) as smtp:
             smtp.starttls()
             user, password = os.environ.get("SMTP_USER"), os.environ.get("SMTP_PASS")
@@ -94,18 +124,58 @@ def send(to, subject, body):
 
 
 def send_login_link(email, url):
+    """The key. Transactional, asked for a moment ago, and the one letter
+    here that somebody is actively waiting on - so it says what it is in
+    the subject line and gets to the link in two lines."""
     return send(
         email,
-        "Your key to the notebook",
-        "Somebody (you, we hope) asked to open the Future with AI betting\n"
-        "notebook with this address.\n\n"
+        "Your key to the Future with AI betting notebook",
+        "Somebody - you, we hope - asked to open the Future with AI betting\n"
+        "notebook with this address. Here is the key:\n\n"
         "    %s\n\n"
-        "The link works once, and only for the next hour.\n\n"
-        "If it was not you, ignore this letter; nothing has been opened." % url,
+        "It works once, and only for the next hour.\n\n"
+        "If it was not you, ignore this letter. Nothing has been opened, and\n"
+        "the address is not on any list: it is kept to post a key when you\n"
+        "ask for one, and the yearly letter if you ask for that." % url,
     )
 
 
 # --- the once-a-year letter ----------------------------------------------
+
+def check(address, base_url):
+    """Post one test letter and say what went out with it.
+
+    A key in a junk folder is somebody who asked to join and silently
+    could not, and nothing in the notebook can see that happen. This is
+    the one way to look."""
+    host = os.environ.get("SMTP_HOST")
+    print("\n  From        %s" % formataddr((SENDER_NAME, SENDER)))
+    print("  Message-ID  <...@%s>" % SENDER_DOMAIN)
+    print("  SMTP        %s" % (
+        "%s:%s%s" % (host, os.environ.get("SMTP_PORT", 587),
+                     " as %s" % os.environ["SMTP_USER"] if os.environ.get("SMTP_USER") else "")
+        if host else "not set - nothing will leave this machine"))
+    print("  Notebook    %s" % base_url)
+
+    site = base_url.split("//")[-1].split("/")[0].split(":")[0]
+    if host and SENDER_DOMAIN not in (site, site.split(".", 1)[-1]):
+        print("\n  ! The From address is at %s and the notebook answers at %s."
+              % (SENDER_DOMAIN, site))
+        print("    A key that comes from somewhere other than the place it opens")
+        print("    is the shape of a phishing letter, and is filtered like one.")
+
+    sent = send(
+        address,
+        "A test letter from the Future with AI betting notebook",
+        "Nothing is wrong. Somebody keeping the notebook asked it to post one\n"
+        "letter, to see where it lands and what it looks like when it gets there.\n\n"
+        "If this is in a junk folder, the notebook's letters are being filtered\n"
+        "and the sign-in keys are too: see the README, under the mail that has to\n"
+        "arrive. If it is in the inbox, the keys should be as well.\n",
+    )
+    print("\n  %s\n" % ("posted" if sent else "FAILED - see above"))
+    return sent
+
 
 def letter_is_due(user, force=False):
     if not user["yearly_letter"]:
